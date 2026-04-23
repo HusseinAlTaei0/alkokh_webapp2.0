@@ -10,8 +10,9 @@
 لكل طلب، الكود يرسل POST (بصيغة `application/x-www-form-urlencoded`) لرابط الـ workflow:
 
 ```
-https://jt-b.com/webhook/whatsapp-workflow/270728.366423.354554.1776273183
+https://jt-b.com/webhook/whatsapp-workflow/[JTBOT_WEBHOOK_ID]
 ```
+> الرابط الحقيقي محفوظ في Netlify Environment Variables → `JTBOT_WEBHOOK_URL`
 
 **الحقول**:
 | الحقل | المحتوى | مثال |
