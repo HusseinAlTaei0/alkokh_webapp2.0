@@ -1,12 +1,6 @@
 [build]
-  command = "npm run build"
   functions = "netlify/functions"
-  publish = "dist"
+  publish = "."
 
-[env]
-  [env.production]
-    # متغيرات الإنتاج تُضاف من Netlify Dashboard
-    # لا تكتبها هنا في الملف!
-
-[context.production]
-  # لا توجد متغيرات هنا - استخدم Netlify Dashboard
+[functions]
+  node_bundler = "esbuild"
