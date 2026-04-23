@@ -3,6 +3,31 @@
    confirmations (cancel/delete) where `confirm()` is not enough.
    ============================================================ */
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+  animation: modal-next-fade 0.15s ease-out;
+}
+
+.modal-card {
+  background: var(--bg-elevated, #1a1a2e);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px;
+  padding: 28px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.4);
+  animation: modal-next-in 0.2s ease-out;
+  overflow-y: auto;
+  max-height: calc(100dvh - 40px);
+}
+
 .modal-next-backdrop {
   position: fixed;
   inset: 0;

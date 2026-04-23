@@ -15,7 +15,7 @@ const Theme = {
     try {
       const stored = localStorage.getItem(this._key);
       if (stored === 'light' || stored === 'dark') return stored;
-    } catch (_) {}
+    } catch (_) { }
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
     return mq && mq.matches ? 'dark' : 'light';
   },
@@ -28,7 +28,7 @@ const Theme = {
     try {
       localStorage.setItem(this._key, mode);
       if (manual) localStorage.setItem(this._manualFlag, '1');
-    } catch (_) {}
+    } catch (_) { }
     this._refreshBtn();
   },
 
@@ -61,7 +61,7 @@ const Theme = {
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
     if (mq) {
       const handler = (e) => {
-        try { if (localStorage.getItem(this._manualFlag) === '1') return; } catch (_) {}
+        try { if (localStorage.getItem(this._manualFlag) === '1') return; } catch (_) { }
         this.set(e.matches ? 'dark' : 'light', false);
       };
       if (mq.addEventListener) mq.addEventListener('change', handler);
@@ -76,38 +76,35 @@ Theme.init();
 // ==========================================
 const Auth = {
   _user: null,
-  _doctor: null, // populated when the logged-in user is a doctor
+  _doctor: null,
+  _employee: null,
 
   async init() {
     if (!supabaseClient) {
       console.warn('Supabase client not ready at Auth.init — will rely on onAuthStateChange');
       return;
     }
-    // Non-blocking: fetch session in the background, don't block initial render
     supabaseClient.auth.getSession().then(async ({ data: { session } }) => {
       this._user = session?.user || null;
-      await this._loadDoctor();
+      await this._loadProfiles();
       this._updateUI();
-      if (Router.currentView && ['employees','operator','reports','doctor','admin'].includes(Router.currentView)) {
+      if (Router.currentView && ['employees', 'operator', 'reports', 'doctor', 'admin', 'employee'].includes(Router.currentView)) {
         Router.route();
       }
     }).catch(err => console.warn('getSession failed:', err));
 
     supabaseClient.auth.onAuthStateChange(async (_event, session) => {
       this._user = session?.user || null;
-      await this._loadDoctor();
+      await this._loadProfiles();
       this._updateUI();
     });
   },
 
   async login(email, password) {
-    const { data, error } = await supabaseClient.auth.signInWithPassword({
-      email,
-      password
-    });
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
     if (error) throw error;
     this._user = data.user;
-    await this._loadDoctor();
+    await this._loadProfiles();
     this._updateUI();
     return data;
   },
@@ -116,49 +113,77 @@ const Auth = {
     await supabaseClient.auth.signOut();
     this._user = null;
     this._doctor = null;
+    this._employee = null;
     this._updateUI();
   },
 
-  isAuthenticated() {
-    return !!this._user;
-  },
+  isAuthenticated() { return !!this._user; },
+  getUser() { return this._user; },
+  getDoctor() { return this._doctor; },
+  getEmployee() { return this._employee; },
 
-  getUser() {
-    return this._user;
-  },
-
-  getDoctor() {
-    return this._doctor;
-  },
-
+  // medical doctor (not a pure operator)
   isDoctor() {
-    return !!this._doctor && this._doctor.is_active !== false;
+    return !!this._doctor && this._doctor.is_active !== false
+      && this._doctor.specialization !== 'operator';
   },
 
   isClinicAdmin() {
     return !!this._doctor && this._doctor.is_admin === true && this._doctor.is_active !== false;
   },
 
-  async _loadDoctor() {
+  // can access operator/queue page (operators + admins)
+  isOperator() {
+    return !!this._doctor && this._doctor.is_operator === true && this._doctor.is_active !== false;
+  },
+
+  isEmployee() {
+    return !!this._employee && this._employee.is_active !== false;
+  },
+
+  async _loadProfiles() {
     if (!this._user) {
       this._doctor = null;
+      this._employee = null;
       return;
     }
+    console.log('🔍 Loading profiles for user:', this._user.id, this._user.email);
+
+    // Add timeout protection (10 seconds max)
+    const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('Profile lookup timed out')), ms));
+
     try {
-      const { data, error } = await supabaseClient
-        .from('doctors')
-        .select('*')
-        .eq('auth_user_id', this._user.id)
-        .maybeSingle();
-      if (error) {
-        console.warn('Failed to load doctor profile:', error);
-        this._doctor = null;
+      const results = await Promise.race([
+        Promise.allSettled([
+          supabaseClient.from('doctors').select('*').eq('auth_user_id', this._user.id).maybeSingle(),
+          supabaseClient.from('employees').select('*').eq('auth_user_id', this._user.id).maybeSingle(),
+        ]),
+        timeout(10000)
+      ]);
+
+      const docResult = results[0];
+      const empResult = results[1];
+
+      if (docResult.status === 'fulfilled' && !docResult.value.error) {
+        this._doctor = docResult.value.data || null;
       } else {
-        this._doctor = data || null;
+        if (docResult.status === 'fulfilled' && docResult.value?.error) console.warn('Doctor profile lookup failed:', docResult.value.error);
+        this._doctor = null;
       }
+
+      if (empResult.status === 'fulfilled' && !empResult.value.error) {
+        this._employee = empResult.value.data || null;
+      } else {
+        if (empResult.status === 'fulfilled' && empResult.value?.error) console.warn('Employee profile lookup failed:', empResult.value.error);
+        this._employee = null;
+      }
+
+      console.log('👨‍⚕️ Doctor profile:', this._doctor ? this._doctor.display_name : 'not found');
+      console.log('👷 Employee profile:', this._employee ? this._employee.name_ar : 'not found');
     } catch (err) {
-      console.warn('Doctor profile lookup failed:', err);
+      console.error('⏰ Profile loading error:', err.message);
       this._doctor = null;
+      this._employee = null;
     }
   },
 
@@ -369,7 +394,7 @@ const DB = {
         .eq('id', orderId)
         .select();
       if (error) throw error;
-      
+
       if (!data || data.length === 0) {
         console.warn('Delete operation returned 0 rows. RLS or missing ID issue.');
         return false;
@@ -390,7 +415,7 @@ const DB = {
         .neq('id', '00000000-0000-0000-0000-000000000000') // Dummy condition to delete all
         .select();
       if (error) throw error;
-      
+
       console.log('Deleted rows:', data?.length);
       return true;
     } catch (err) {
@@ -465,13 +490,17 @@ const DB = {
   },
 
   // --- Employee System ---
-  async employeeLogin(pin) {
+  async getEmployeeByAuthId(userId) {
     try {
-      const { data, error } = await supabaseClient.rpc('employee_login', { p_pin: pin });
+      const { data, error } = await supabaseClient
+        .from('employees')
+        .select('*')
+        .eq('auth_user_id', userId)
+        .maybeSingle();
       if (error) throw error;
-      return data && data.length > 0 ? data[0] : null;
+      return data || null;
     } catch (err) {
-      console.error('Employee login error:', err);
+      console.error('Employee lookup error:', err);
       return null;
     }
   },
@@ -1005,6 +1034,258 @@ const DB = {
 
 
 // ==========================================
+// UTILITY FUNCTIONS (Radix Select Auto-Upgrader)
+// ==========================================
+function upgradeSelectsToRadix(container) {
+  const selects = container.querySelectorAll('select:not([data-radix-upgraded]):not(.swal2-select)');
+
+  selects.forEach(select => {
+    // If select doesn't have parentNode, abort (rare case)
+    if (!select.parentNode) return;
+
+    select.setAttribute('data-radix-upgraded', 'true');
+    select.style.display = 'none';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'radix-select';
+
+    if (select.style.flex) wrapper.style.flex = select.style.flex;
+    if (select.style.marginTop) wrapper.style.marginTop = select.style.marginTop;
+
+    const triggerHeight = select.classList.contains('form-input') ? '48px' : (select.style.padding ? '38px' : '48px');
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = `radix-select-trigger ${select.className}`;
+    trigger.style.height = triggerHeight;
+    trigger.style.padding = '0 16px';
+    if (select.disabled) trigger.disabled = true;
+
+    const valSpan = document.createElement('span');
+    valSpan.className = 'radix-select-value';
+    const selectedOpt = select.options[select.selectedIndex];
+    valSpan.textContent = selectedOpt ? selectedOpt.textContent : 'اختر...';
+
+    const caretOpts = `<svg class="radix-caret" width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M4.93 5.43c-.17.18-.17.47 0 .64l2.5 2.5c.18.18.47.18.64 0l2.5-2.5c.18-.18.18-.47 0-.64-.18-.18-.47-.18-.64 0L7.5 7.86 5.57 5.43c-.18-.18-.47-.18-.64 0z" fill="currentColor"></path></svg>`;
+    trigger.innerHTML = valSpan.outerHTML + caretOpts;
+
+    const content = document.createElement('div');
+    content.className = 'radix-select-content';
+    content.setAttribute('role', 'listbox');
+
+    const checkSvg = `<svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M11.47 3.73c.29.19.37.58.18.86L7.4 11.09c-.1.15-.26.25-.44.28-.18.02-.36-.04-.5-.16L3.7 8.71c-.25-.23-.27-.63-.04-.88.23-.25.63-.27.88-.04l2.2 2 3.85-5.88c.19-.29.58-.37.87-.18z" fill="currentColor"></path></svg>`;
+
+    Array.from(select.options).forEach(opt => {
+      const item = document.createElement('div');
+      item.className = 'radix-select-item';
+      item.setAttribute('role', 'option');
+      item.setAttribute('data-value', opt.value);
+      if (opt.selected) item.setAttribute('data-state', 'checked');
+
+      item.innerHTML = `<span class="radix-select-item-indicator">${checkSvg}</span><span class="radix-select-item-text">${opt.textContent}</span>`;
+
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        content.querySelectorAll('.radix-select-item').forEach(i => i.setAttribute('data-state', 'unchecked'));
+        item.setAttribute('data-state', 'checked');
+
+        trigger.querySelector('.radix-select-value').textContent = opt.textContent;
+        select.value = opt.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+
+        wrapper.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+      });
+
+      content.appendChild(item);
+    });
+
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(content);
+
+    select.parentNode.insertBefore(wrapper, select.nextSibling);
+
+    const closeMenu = (e) => {
+      if (!wrapper.contains(e.target)) {
+        wrapper.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+    };
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = wrapper.classList.toggle('open');
+      trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      if (isOpen) {
+        document.addEventListener('click', closeMenu, { once: true });
+      }
+    });
+
+    select.addEventListener('change', () => {
+      const matchingOpt = Array.from(select.options).find(o => o.value === select.value);
+      if (matchingOpt) {
+        trigger.querySelector('.radix-select-value').textContent = matchingOpt.textContent;
+        content.querySelectorAll('.radix-select-item').forEach(i => i.setAttribute('data-state', i.dataset.value === select.value ? 'checked' : 'unchecked'));
+      }
+    });
+  });
+}
+
+function upgradeDateInputsToCalendar(container) {
+  const dateInputs = container.querySelectorAll('input[type="date"]:not([data-calendar-upgraded])');
+
+  dateInputs.forEach(input => {
+    input.setAttribute('data-calendar-upgraded', 'true');
+    input.style.display = 'none';
+
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.width = '100%';
+
+    const cal = document.createElement('div');
+    cal.className = 'radix-calendar';
+
+    const months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+    const days = ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
+
+    let currentDate = new Date();
+    let selectedDate = null;
+
+    if (input.value) {
+      selectedDate = new Date(input.value);
+      currentDate = new Date(input.value);
+    }
+
+    function renderCalendar() {
+      cal.innerHTML = '';
+
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+
+      const header = document.createElement('div');
+      header.className = 'radix-cal-header';
+
+      const prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.className = 'radix-cal-nav';
+      prevBtn.innerHTML = '❯';
+      prevBtn.onclick = () => {
+        currentDate.setMonth(month - 1);
+        renderCalendar();
+      };
+
+      const title = document.createElement('div');
+      title.className = 'radix-cal-title';
+      title.textContent = `${months[month]} ${year}`;
+
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'radix-cal-nav';
+      nextBtn.innerHTML = '❮';
+      nextBtn.onclick = () => {
+        currentDate.setMonth(month + 1);
+        renderCalendar();
+      };
+
+      header.appendChild(prevBtn);
+      header.appendChild(title);
+      header.appendChild(nextBtn);
+
+      const grid = document.createElement('div');
+      grid.className = 'radix-cal-grid';
+
+      days.forEach(d => {
+        const wd = document.createElement('div');
+        wd.className = 'radix-cal-weekday';
+        wd.textContent = d;
+        grid.appendChild(wd);
+      });
+
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      for (let i = 0; i < firstDay; i++) {
+        const empty = document.createElement('div');
+        empty.className = 'radix-cal-day empty';
+        grid.appendChild(empty);
+      }
+
+      const today = new Date();
+
+      for (let i = 1; i <= daysInMonth; i++) {
+        const dayBtn = document.createElement('button');
+        dayBtn.type = 'button';
+        dayBtn.className = 'radix-cal-day';
+        dayBtn.textContent = i;
+
+        if (selectedDate &&
+          selectedDate.getDate() === i &&
+          selectedDate.getMonth() === month &&
+          selectedDate.getFullYear() === year) {
+          dayBtn.classList.add('selected');
+        }
+
+        if (today.getDate() === i &&
+          today.getMonth() === month &&
+          today.getFullYear() === year) {
+          dayBtn.classList.add('today');
+        }
+
+        dayBtn.onclick = () => {
+          selectedDate = new Date(year, month, i);
+
+          const y = selectedDate.getFullYear();
+          const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+          const d = String(selectedDate.getDate()).padStart(2, '0');
+          input.value = `${y}-${m}-${d}`;
+
+          renderCalendar();
+        };
+
+        grid.appendChild(dayBtn);
+      }
+
+      cal.appendChild(header);
+      cal.appendChild(grid);
+    }
+
+    renderCalendar();
+    wrapper.appendChild(cal);
+    input.parentNode.insertBefore(wrapper, input.nextSibling);
+
+    const subTitle = document.createElement('div');
+    subTitle.style.marginTop = '12px';
+    subTitle.style.fontSize = '0.75rem';
+    subTitle.style.color = 'var(--text-secondary)';
+    subTitle.textContent = 'اختر يوم الموعد';
+    wrapper.appendChild(subTitle);
+  });
+}
+
+const selectObserver = new MutationObserver((mutations) => {
+  let shouldCheck = false;
+  for (let m of mutations) {
+    if (m.addedNodes.length > 0) {
+      shouldCheck = true;
+      break;
+    }
+  }
+  if (shouldCheck) {
+    upgradeSelectsToRadix(document.body);
+  }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  upgradeSelectsToRadix(document.body);
+  selectObserver.observe(document.body, { childList: true, subtree: true });
+});
+
+upgradeSelectsToRadix(document.body);
+selectObserver.observe(document.body, { childList: true, subtree: true });
+
+// ==========================================
 // UTILITY FUNCTIONS
 // ==========================================
 function $(selector) {
@@ -1049,9 +1330,9 @@ function playNotificationSound() {
     const audio = $('#notification-sound');
     if (audio) {
       audio.currentTime = 0;
-      audio.play().catch(() => {});
+      audio.play().catch(() => { });
     }
-  } catch {}
+  } catch { }
 }
 
 function showLoading(container) {
@@ -1093,7 +1374,7 @@ const WhatsApp = {
       if (error) {
         console.warn(`⚠️ Edge function invoke error [${eventType}]:`, error.message || error);
         // fire a UI toast for visibility (admin/operator only — harmless for customers)
-        try { showToast && showToast(`⚠️ فشل إرسال واتساب: ${error.message || 'خطأ'}`, 'warning'); } catch {}
+        try { showToast && showToast(`⚠️ فشل إرسال واتساب: ${error.message || 'خطأ'}`, 'warning'); } catch { }
         return { success: false, error: error.message || String(error) };
       }
 
@@ -1102,7 +1383,7 @@ const WhatsApp = {
         return { success: true, log_id: data.log_id };
       } else {
         console.warn(`⚠️ WhatsApp send failed [${eventType}]:`, data?.error);
-        try { showToast && showToast(`⚠️ لم تُرسل رسالة الواتساب (${eventType})`, 'warning'); } catch {}
+        try { showToast && showToast(`⚠️ لم تُرسل رسالة الواتساب (${eventType})`, 'warning'); } catch { }
         return { success: false, error: data?.error, log_id: data?.log_id };
       }
     } catch (err) {
@@ -1169,28 +1450,28 @@ const WhatsApp = {
 
 // Canonical list of intake symptoms (key -> Arabic label)
 const SYMPTOMS = [
-  { key: 'vomit',              label: 'قيء',                   icon: '🤮' },
-  { key: 'diarrhea',           label: 'إسهال',                 icon: '💩' },
-  { key: 'appetite_loss',      label: 'انقطاع شهية',           icon: '🍽️' },
-  { key: 'fever',              label: 'ارتفاع درجة حرارة',     icon: '🌡️' },
-  { key: 'lethargy',           label: 'خمول',                  icon: '😴' },
-  { key: 'mobility_issue',     label: 'صعوبة حركة',            icon: '🦴' },
-  { key: 'urination_issue',    label: 'مشكلة بالإدرار',        icon: '💧' },
-  { key: 'defecation_issue',   label: 'مشكلة بالخروج',         icon: '🚽' },
-  { key: 'labor',              label: 'ولادة',                 icon: '🤰' },
-  { key: 'ultrasound',         label: 'سونار',                 icon: '📡' },
-  { key: 'lab_test',           label: 'فحص مختبري',           icon: '🧪' },
+  { key: 'vomit', label: 'قيء', icon: '🤮' },
+  { key: 'diarrhea', label: 'إسهال', icon: '💩' },
+  { key: 'appetite_loss', label: 'انقطاع شهية', icon: '🍽️' },
+  { key: 'fever', label: 'ارتفاع درجة حرارة', icon: '🌡️' },
+  { key: 'lethargy', label: 'خمول', icon: '😴' },
+  { key: 'mobility_issue', label: 'صعوبة حركة', icon: '🦴' },
+  { key: 'urination_issue', label: 'مشكلة بالإدرار', icon: '💧' },
+  { key: 'defecation_issue', label: 'مشكلة بالخروج', icon: '🚽' },
+  { key: 'labor', label: 'ولادة', icon: '🤰' },
+  { key: 'ultrasound', label: 'سونار', icon: '📡' },
+  { key: 'lab_test', label: 'فحص مختبري', icon: '🧪' },
 ];
 const SYMPTOM_LABEL = SYMPTOMS.reduce((acc, s) => { acc[s.key] = s.label; return acc; }, {});
 
 const ANIMAL_TYPES = [
-  { value: 'قطة',         icon: '🐱' },
-  { value: 'كلب',         icon: '🐶' },
-  { value: 'طائر',        icon: '🐦' },
-  { value: 'أرنب',        icon: '🐰' },
-  { value: 'هامستر',      icon: '🐹' },
-  { value: 'زواحف',       icon: '🦎' },
-  { value: 'حيوان آخر',   icon: '🐾' },
+  { value: 'قطة', icon: '🐱' },
+  { value: 'كلب', icon: '🐶' },
+  { value: 'طائر', icon: '🐦' },
+  { value: 'أرنب', icon: '🐰' },
+  { value: 'هامستر', icon: '🐹' },
+  { value: 'زواحف', icon: '🦎' },
+  { value: 'حيوان آخر', icon: '🐾' },
 ];
 
 // Realtime subscriptions manager
@@ -1329,27 +1610,40 @@ const Router = {
     }
 
     // --- Auth gates ---
-    // Employees with PIN session trying to access admin pages → send to their own page
-    const _hasPinSession = !!sessionStorage.getItem('alkokh_employee');
-    if (head === 'employees' || head === 'reports') {
-      if (_hasPinSession && !Auth.isAuthenticated()) {
-        window.location.hash = '#employee';
+    if (head === 'employee') {
+      if (!Auth.isAuthenticated()) {
+        this.currentView = 'login';
+        LoginView.render($('#app'), 'employee');
         return;
       }
+      if (!Auth.isEmployee()) {
+        showToast('⛔ هذه الصفحة للموظفين فقط', 'warning');
+        window.location.hash = '#home';
+        return;
+      }
+    }
+    if (head === 'employees' || head === 'reports') {
       if (!Auth.isAuthenticated()) {
         this.currentView = 'login';
         LoginView.render($('#app'), head);
+        return;
+      }
+      // التقارير مسموحة فقط للأدمن
+      if (head === 'reports' && !Auth.isClinicAdmin()) {
+        showToast('⛔ هذه الصفحة للأدمن فقط', 'warning');
+        window.location.hash = '#home';
         return;
       }
     }
     if (head === 'operator' || head === 'dashboard') {
-      if (_hasPinSession && !Auth.isAuthenticated()) {
-        window.location.hash = '#employee';
-        return;
-      }
       if (!Auth.isAuthenticated()) {
         this.currentView = 'login';
         LoginView.render($('#app'), head);
+        return;
+      }
+      if (!Auth.isClinicAdmin() && !Auth.isOperator() && !Auth.isDoctor()) {
+        showToast('⛔ هذه الصفحة للمنظمين والأطباء فقط', 'warning');
+        window.location.hash = '#home';
         return;
       }
     }
@@ -1468,13 +1762,6 @@ const LoginView = {
             <p>سجّل دخولك للوصول إلى لوحة التحكم</p>
           </div>
 
-          <!-- Tab switcher -->
-          <div class="login-tabs">
-            <button class="login-tab active" data-tab="staff">🩺 طاقم طبي / مدير</button>
-            <button class="login-tab" data-tab="employee">✂️ موظفو الخدمات</button>
-          </div>
-
-          <!-- STAFF TAB: Email + Password -->
           <div class="login-body" id="tab-staff">
             <div class="login-alert" id="login-error" style="display:none;">
               <span>❌</span>
@@ -1482,7 +1769,7 @@ const LoginView = {
             </div>
             <div class="form-group">
               <label class="form-label">البريد الإلكتروني</label>
-              <input type="email" class="form-input login-input" id="login-email" placeholder="doctor@alkokh.com" autocomplete="email" dir="ltr">
+              <input type="email" class="form-input login-input" id="login-email" placeholder="user@alkokh.com" autocomplete="email" dir="ltr">
             </div>
             <div class="form-group">
               <label class="form-label">كلمة المرور</label>
@@ -1499,22 +1786,6 @@ const LoginView = {
             </button>
           </div>
 
-          <!-- EMPLOYEE TAB: PIN -->
-          <div class="login-body" id="tab-employee" style="display:none;">
-            <p class="pin-hint">أدخل رمز PIN الخاص بك (4 أرقام)</p>
-            <div class="pin-input-container">
-              <input type="password" class="pin-digit" id="pin-1" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-              <input type="password" class="pin-digit" id="pin-2" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-              <input type="password" class="pin-digit" id="pin-3" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-              <input type="password" class="pin-digit" id="pin-4" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-            </div>
-            <div class="pin-error" id="pin-error" style="display:none;">❌ رمز الدخول غير صحيح</div>
-            <button class="btn btn-primary btn-lg btn-block" id="pin-submit" style="margin-top:24px;">
-              <span id="pin-btn-text">🔓 دخول</span>
-              <span id="pin-btn-loading" style="display:none;"><span class="btn-spinner"></span> جاري التحقق...</span>
-            </button>
-          </div>
-
           <div class="login-footer">
             <a href="#home" class="login-back-link">← العودة للرئيسية</a>
           </div>
@@ -1527,20 +1798,6 @@ const LoginView = {
   },
 
   _bindEvents(container) {
-    // --- Tab switching ---
-    container.querySelectorAll('.login-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        const t = tab.dataset.tab;
-        this._activeTab = t;
-        container.querySelectorAll('.login-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
-        container.querySelector('#tab-staff').style.display = t === 'staff' ? '' : 'none';
-        container.querySelector('#tab-employee').style.display = t === 'employee' ? '' : 'none';
-        if (t === 'employee') setTimeout(() => container.querySelector('#pin-1')?.focus(), 100);
-        else setTimeout(() => container.querySelector('#login-email')?.focus(), 100);
-      });
-    });
-
-    // --- Staff (email+password) login ---
     const submitBtn = container.querySelector('#login-submit');
     const emailInput = container.querySelector('#login-email');
     const passwordInput = container.querySelector('#login-password');
@@ -1561,21 +1818,26 @@ const LoginView = {
         errorMsg.textContent = 'الرجاء إدخال البريد الإلكتروني وكلمة المرور';
         return;
       }
-      container.querySelector('#login-btn-text').style.display = 'none';
-      container.querySelector('#login-btn-loading').style.display = 'inline-flex';
+      const btnText = container.querySelector('#login-btn-text');
+      const btnLoading = container.querySelector('#login-btn-loading');
+      if (btnText) btnText.style.display = 'none';
+      if (btnLoading) btnLoading.style.display = 'inline-flex';
       submitBtn.disabled = true;
       errorDiv.style.display = 'none';
+      let navigated = false;
       try {
         await Auth.login(email, password);
         showToast('تم تسجيل الدخول بنجاح! مرحباً بك 👋', 'success');
         playNotificationSound();
-        // Routing: admins see requested page, doctors see their dashboard
-        if (Auth.isClinicAdmin()) {
-          window.location.hash = '#' + this._redirectTo;
-          await Router.navigate(this._redirectTo);
-        } else if (Auth.isDoctor()) {
-          window.location.hash = '#doctor';
-          await Router.navigate('doctor');
+        let dest = null;
+        if (Auth.isClinicAdmin()) dest = this._redirectTo;
+        else if (Auth.isDoctor()) dest = 'doctor';
+        else if (Auth.isOperator()) dest = 'operator';
+        else if (Auth.isEmployee()) dest = 'employee';
+        if (dest) {
+          navigated = true;
+          history.replaceState(null, null, '#' + dest);
+          await Router.navigate(dest);
         } else {
           errorDiv.style.display = 'flex';
           errorMsg.textContent = '⛔ هذا الحساب لا يملك صلاحية الدخول';
@@ -1588,66 +1850,19 @@ const LoginView = {
           ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
           : 'حدث خطأ أثناء تسجيل الدخول. يرجى المحاولة مرة أخرى.';
       } finally {
-        container.querySelector('#login-btn-text').style.display = 'inline';
-        container.querySelector('#login-btn-loading').style.display = 'none';
-        submitBtn.disabled = false;
+        if (!navigated) {
+          const t = container.querySelector('#login-btn-text');
+          const l = container.querySelector('#login-btn-loading');
+          if (t) t.style.display = 'inline';
+          if (l) l.style.display = 'none';
+          submitBtn.disabled = false;
+        }
       }
     };
 
     submitBtn?.addEventListener('click', handleLogin);
     passwordInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
     emailInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') passwordInput?.focus(); });
-
-    // --- Employee (PIN) login ---
-    const digits = [1, 2, 3, 4].map(i => container.querySelector(`#pin-${i}`));
-    const pinError = container.querySelector('#pin-error');
-    const pinSubmit = container.querySelector('#pin-submit');
-
-    digits.forEach((input, idx) => {
-      input.addEventListener('input', () => {
-        input.value = input.value.replace(/[^0-9]/g, '');
-        if (input.value && idx < 3) digits[idx + 1].focus();
-        pinError.style.display = 'none';
-      });
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Backspace' && !input.value && idx > 0) {
-          digits[idx - 1].focus();
-          digits[idx - 1].value = '';
-        }
-        if (e.key === 'Enter') handlePinSubmit();
-      });
-      input.addEventListener('focus', () => input.select());
-    });
-
-    const handlePinSubmit = async () => {
-      const pin = digits.map(d => d.value).join('');
-      if (pin.length !== 4) {
-        pinError.textContent = '⚠️ الرجاء إدخال 4 أرقام';
-        pinError.style.display = 'block';
-        return;
-      }
-      pinSubmit.disabled = true;
-      container.querySelector('#pin-btn-text').style.display = 'none';
-      container.querySelector('#pin-btn-loading').style.display = 'inline-flex';
-      const employee = await DB.employeeLogin(pin);
-      if (employee) {
-        sessionStorage.setItem('alkokh_employee', JSON.stringify(employee));
-        showToast(`مرحباً ${employee.name_ar}! 👋`, 'success');
-        playNotificationSound();
-        window.location.hash = '#employee';
-        await Router.navigate('employee');
-      } else {
-        pinError.textContent = '❌ رمز الدخول غير صحيح';
-        pinError.style.display = 'block';
-        digits.forEach(d => { d.value = ''; });
-        digits[0].focus();
-        pinSubmit.disabled = false;
-        container.querySelector('#pin-btn-text').style.display = 'inline';
-        container.querySelector('#pin-btn-loading').style.display = 'none';
-      }
-    };
-
-    pinSubmit?.addEventListener('click', handlePinSubmit);
   }
 };
 
@@ -1755,7 +1970,7 @@ const BookingView = {
       card.addEventListener('click', () => {
         this.selectedCategory = card.dataset.category;
         this.petType = card.dataset.category === 'cat_grooming' ? 'cat' :
-                       card.dataset.category === 'dog_grooming' ? 'dog' : null;
+          card.dataset.category === 'dog_grooming' ? 'dog' : null;
         this.step = 2;
         this._renderStep($('#app'));
       });
@@ -1910,7 +2125,7 @@ const BookingView = {
           WhatsApp.sendBookingConfirmation(
             customerPhone, customerName, petName, service?.type_ar || '',
             typeof newOrderId === 'string' ? newOrderId : null
-          ).catch(() => {});
+          ).catch(() => { });
         }
 
         playNotificationSound();
@@ -2389,13 +2604,13 @@ const OperatorView = {
         if (!confirm('هل أنت متأكد من حذف هذا السجل نهائياً من قاعدة البيانات؟ لا يمكن التراجع عن هذا الإجراء.')) return;
         const orderId = btn.dataset.deleteId;
         const originalText = btn.innerHTML;
-        
+
         try {
           btn.disabled = true;
           btn.innerHTML = '<span class="btn-spinner"></span>...';
 
           const success = await DB.deleteOrder(orderId);
-          
+
           if (success) {
             showToast('تم حذف السجل بنجاح 🗑️', 'info');
             await this._buildUI($('#app'));
@@ -2439,130 +2654,29 @@ const EmployeeView = {
   _lastOrderCount: 0,
 
   async render(container) {
-    // Check if employee is already logged in (session)
-    const savedEmployee = sessionStorage.getItem('alkokh_employee');
-    if (savedEmployee) {
-      try {
-        this._employee = JSON.parse(savedEmployee);
-        showLoading(container);
-        await this._buildTasksUI(container);
-        this._startTimers();
-        this._startAutoRefresh(container);
-        return;
-      } catch (e) {
-        sessionStorage.removeItem('alkokh_employee');
-      }
+    if (!Auth.isAuthenticated() || !Auth.isEmployee()) {
+      window.location.hash = '#login';
+      LoginView.render(container, 'employee');
+      return;
     }
-    this._renderPinLogin(container);
-  },
-
-  _renderPinLogin(container) {
-    container.innerHTML = `
-      <div class="employee-login-container animate-in">
-        <div class="employee-login-card">
-          <div class="employee-login-header">
-            <img src="assets/logo.svg" alt="الكوخ" style="width:60px; height:60px; margin-bottom:16px;">
-            <h1>صفحة الموظف</h1>
-            <p>أدخل رمز الدخول الخاص بك</p>
-          </div>
-          <div class="pin-input-container">
-            <input type="password" class="pin-digit" id="pin-1" maxlength="1" inputmode="numeric" pattern="[0-9]*" autofocus>
-            <input type="password" class="pin-digit" id="pin-2" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-            <input type="password" class="pin-digit" id="pin-3" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-            <input type="password" class="pin-digit" id="pin-4" maxlength="1" inputmode="numeric" pattern="[0-9]*">
-          </div>
-          <div class="pin-error" id="pin-error" style="display:none;">
-            ❌ رمز الدخول غير صحيح
-          </div>
-          <button class="btn btn-primary btn-lg btn-block" id="pin-submit" style="margin-top:24px;">
-            <span id="pin-btn-text">🔓 دخول</span>
-            <span id="pin-btn-loading" style="display:none;">
-              <span class="btn-spinner"></span> جاري التحقق...
-            </span>
-          </button>
-          <div style="text-align:center; margin-top:16px;">
-            <a href="#booking" class="login-back-link">← العودة لصفحة الحجز</a>
-          </div>
+    try {
+      this._employee = Auth.getEmployee();
+      showLoading(container);
+      await this._buildTasksUI(container);
+      this._startTimers();
+      this._startAutoRefresh(container);
+    } catch (err) {
+      console.error('EmployeeView render error:', err);
+      container.innerHTML = `
+        <div class="empty-state">
+          <span class="emoji">❌</span>
+          <p>عذراً، حدث خطأ أثناء تحميل البيانات</p>
+          <button class="btn btn-primary" onclick="location.reload()">إعادة تحميل</button>
         </div>
-      </div>
-    `;
-
-    this._bindPinEvents(container);
+      `;
+    }
   },
 
-  _bindPinEvents(container) {
-    const digits = [1, 2, 3, 4].map(i => container.querySelector(`#pin-${i}`));
-    const errorDiv = container.querySelector('#pin-error');
-    const submitBtn = container.querySelector('#pin-submit');
-
-    // Auto-focus and auto-advance
-    digits.forEach((input, idx) => {
-      input.addEventListener('input', () => {
-        input.value = input.value.replace(/[^0-9]/g, '');
-        if (input.value && idx < 3) {
-          digits[idx + 1].focus();
-        }
-        errorDiv.style.display = 'none';
-      });
-
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Backspace' && !input.value && idx > 0) {
-          digits[idx - 1].focus();
-          digits[idx - 1].value = '';
-        }
-        if (e.key === 'Enter') {
-          handlePinSubmit();
-        }
-      });
-
-      // Select all on focus for easy re-entry
-      input.addEventListener('focus', () => input.select());
-    });
-
-    const handlePinSubmit = async () => {
-      const pin = digits.map(d => d.value).join('');
-      if (pin.length !== 4) {
-        errorDiv.textContent = '⚠️ الرجاء إدخال 4 أرقام';
-        errorDiv.style.display = 'block';
-        return;
-      }
-
-      submitBtn.disabled = true;
-      container.querySelector('#pin-btn-text').style.display = 'none';
-      container.querySelector('#pin-btn-loading').style.display = 'inline-flex';
-
-      const employee = await DB.employeeLogin(pin);
-
-      if (employee) {
-        this._employee = employee;
-        sessionStorage.setItem('alkokh_employee', JSON.stringify(employee));
-        showToast(`مرحباً ${employee.name_ar}! 👋`, 'success');
-        playNotificationSound();
-        showLoading($('#app'));
-        await this._buildTasksUI($('#app'));
-        this._startTimers();
-        this._startAutoRefresh($('#app'));
-      } else {
-        errorDiv.textContent = '❌ رمز الدخول غير صحيح';
-        errorDiv.style.display = 'block';
-        digits.forEach(d => { d.value = ''; });
-        digits[0].focus();
-
-        // Shake animation
-        container.querySelector('.pin-input-container').classList.add('shake');
-        setTimeout(() => {
-          container.querySelector('.pin-input-container')?.classList.remove('shake');
-        }, 600);
-      }
-
-      submitBtn.disabled = false;
-      container.querySelector('#pin-btn-text').style.display = 'inline';
-      container.querySelector('#pin-btn-loading').style.display = 'none';
-    };
-
-    submitBtn?.addEventListener('click', handlePinSubmit);
-    setTimeout(() => digits[0]?.focus(), 300);
-  },
 
   async _buildTasksUI(container) {
     if (!this._employee) return;
@@ -2606,11 +2720,6 @@ const EmployeeView = {
           <span class="stat-icon">✅</span>
           <div class="stat-value">${completedOrders.length}</div>
           <div class="stat-label">مكتملة اليوم</div>
-        </div>
-        <div class="stat-card gold">
-          <span class="stat-icon"><img src="assets/alkokh_icons/customers.png" alt="customers"></span>
-          <div class="stat-value">${stats.uniqueCustomers}</div>
-          <div class="stat-label">زبائن فريدين</div>
         </div>
       </div>
     `;
@@ -2736,8 +2845,8 @@ const EmployeeView = {
 
   _bindTaskEvents(container) {
     // Logout
-    container.querySelector('#employee-logout')?.addEventListener('click', () => {
-      sessionStorage.removeItem('alkokh_employee');
+    container.querySelector('#employee-logout')?.addEventListener('click', async () => {
+      await Auth.logout();
       this._employee = null;
       this._stopAutoRefresh();
       if (this.timerInterval) clearInterval(this.timerInterval);
@@ -2771,7 +2880,7 @@ const EmployeeView = {
                 service?.type_ar || '',
                 this._employee.name_ar,
                 orderId
-              ).catch(() => {});
+              ).catch(() => { });
             }
           } catch (e) { /* non-blocking */ }
         } else {
@@ -2812,7 +2921,7 @@ const EmployeeView = {
 
           // Send WhatsApp "task completed" notification (non-blocking, logged)
           if (orderPhone) {
-            WhatsApp.sendTaskCompleted(orderPhone, orderCustomer, orderPet, orderServiceAr, duration, orderId).catch(() => {});
+            WhatsApp.sendTaskCompleted(orderPhone, orderCustomer, orderPet, orderServiceAr, duration, orderId).catch(() => { });
             // Schedule feedback request 1 hour later (handled by pg_cron + edge function)
             WhatsApp.scheduleFeedbackRequest({
               phone: orderPhone,
@@ -2821,7 +2930,7 @@ const EmployeeView = {
               serviceNameAr: orderServiceAr,
               orderId,
               delayMinutes: 60
-            }).catch(() => {});
+            }).catch(() => { });
           }
         } else {
           showToast('❌ حدث خطأ، حاول مرة أخرى', 'error');
@@ -2851,7 +2960,7 @@ const EmployeeView = {
       try {
         const orders = await DB.getEmployeeOrders(this._employee.id);
         const currentCount = orders.filter(o => o.status === 'assigned').length;
-        
+
         if (currentCount > this._lastOrderCount && this._lastOrderCount >= 0) {
           playNotificationSound();
           showToast('📩 مهمة جديدة وصلت!', 'info');
@@ -3015,10 +3124,10 @@ const DashboardView = {
         </div>
 
         <div class="tab-filter" style="margin-bottom:14px;">
-          <button class="tab-filter-btn ${(this._logsFilter||'all')==='all'?'active':''}" data-logs-filter="all">الكل</button>
-          <button class="tab-filter-btn ${this._logsFilter==='success'?'active':''}" data-logs-filter="success">ناجحة</button>
-          <button class="tab-filter-btn ${this._logsFilter==='failed'?'active':''}" data-logs-filter="failed">فاشلة</button>
-          <button class="tab-filter-btn ${this._logsFilter==='pending'?'active':''}" data-logs-filter="pending">قيد الإرسال</button>
+          <button class="tab-filter-btn ${(this._logsFilter || 'all') === 'all' ? 'active' : ''}" data-logs-filter="all">الكل</button>
+          <button class="tab-filter-btn ${this._logsFilter === 'success' ? 'active' : ''}" data-logs-filter="success">ناجحة</button>
+          <button class="tab-filter-btn ${this._logsFilter === 'failed' ? 'active' : ''}" data-logs-filter="failed">فاشلة</button>
+          <button class="tab-filter-btn ${this._logsFilter === 'pending' ? 'active' : ''}" data-logs-filter="pending">قيد الإرسال</button>
         </div>
 
         <div style="overflow-x:auto;">
@@ -3156,13 +3265,13 @@ const DashboardView = {
       deleteAllBtn.addEventListener('click', async () => {
         if (!confirm('⚠️ تحذير خطير: هل أنت متأكد من حذف *جميع* السجلات والطلبات السابقة من قاعدة البيانات بشكل نهائي؟ هذا الإجراء لا يمكن التراجع عنه.')) return;
         if (!confirm('تأكيد أخير: حذف كل البيانات؟')) return;
-        
+
         deleteAllBtn.disabled = true;
         deleteAllBtn.textContent = 'جاري الحذف...';
-        
+
         await DB.deleteAllOrders();
         showToast('تم تصفير جميع السجلات بنجاح 🗑️', 'success');
-        
+
         showLoading($('#app'));
         await this._buildUI($('#app'));
       });
@@ -3373,7 +3482,7 @@ function initAnimatedBackground() {
     const paw = document.createElement('div');
     paw.className = 'floating-paw';
     paw.innerHTML = pawSvg;
-    
+
     const size = Math.random() * 40 + 30;
     const left = Math.random() * 100;
     const duration = Math.random() * 20 + 25;
@@ -3382,7 +3491,7 @@ function initAnimatedBackground() {
     const rotStart = Math.random() * 360;
     const rotEnd = rotStart + (Math.random() > 0.5 ? 1 : -1) * (Math.random() * 180 + 90);
     const scale = Math.random() * 0.5 + 0.8;
-    
+
     paw.style.cssText = `
       width: ${size}px;
       height: ${size}px;
@@ -3394,7 +3503,7 @@ function initAnimatedBackground() {
       --rot-end: ${rotEnd}deg;
       --scale: ${scale};
     `;
-    
+
     container.appendChild(paw);
   }
 }
@@ -3406,12 +3515,12 @@ function initAnimatedBackground() {
 
 // ---------- helpers for clinic UI ----------
 function escHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function formatDateTimeAr(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleString('ar-IQ', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleString('ar-IQ', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 function formatRelativeAr(iso) {
   if (!iso) return '';
@@ -3425,15 +3534,15 @@ function formatRelativeAr(iso) {
   return `قبل ${days} يوم`;
 }
 function severityBadge(sev) {
-  const map = { low:{txt:'منخفضة',cls:'sev-low'}, medium:{txt:'متوسطة',cls:'sev-medium'}, high:{txt:'عالية',cls:'sev-high'}, critical:{txt:'حرجة',cls:'sev-critical'} };
+  const map = { low: { txt: 'منخفضة', cls: 'sev-low' }, medium: { txt: 'متوسطة', cls: 'sev-medium' }, high: { txt: 'عالية', cls: 'sev-high' }, critical: { txt: 'حرجة', cls: 'sev-critical' } };
   const m = map[sev]; if (!m) return '';
   return `<span class="sev-badge ${m.cls}">${m.txt}</span>`;
 }
 function statusLabel(status) {
-  return ({ waiting:'بانتظار القبول', in_progress:'قيد المعالجة', completed:'مكتملة', cancelled:'ملغاة' }[status] || status);
+  return ({ waiting: 'بانتظار القبول', in_progress: 'قيد المعالجة', completed: 'مكتملة', cancelled: 'ملغاة' }[status] || status);
 }
 function playNotifSound() {
-  try { const a = document.getElementById('notification-sound'); if (a) { a.currentTime = 0; a.play().catch(() => {}); } } catch {}
+  try { const a = document.getElementById('notification-sound'); if (a) { a.currentTime = 0; a.play().catch(() => { }); } } catch { }
 }
 
 
@@ -3850,7 +3959,7 @@ const DoctorView = {
       <div class="doctor-view animate-in">
         <div class="doctor-header">
           <div class="doctor-header-main">
-            <div class="doctor-avatar" style="background:${escHtml(doctor.avatar_color || '#7c3aed')}">${escHtml((doctor.display_name || 'د').slice(0,1))}</div>
+            <div class="doctor-avatar" style="background:${escHtml(doctor.avatar_color || '#7c3aed')}">${escHtml((doctor.display_name || 'د').slice(0, 1))}</div>
             <div>
               <h1>مرحباً د. ${escHtml(doctor.display_name)}${doctor.is_admin ? ' <span class="admin-badge">مدير</span>' : ''}</h1>
               <p>${escHtml(doctor.specialization || 'طبيب بيطري')}</p>
@@ -3941,8 +4050,8 @@ const DoctorView = {
           ${primaryDocName ? `<div class="case-doctor">الطبيب المعالج: ${escHtml(primaryDocName)}</div>` : ''}
           <div class="case-actions">
             ${v.status === 'waiting'
-              ? `<button class="btn btn-primary" data-accept-id="${v.id}">قبول الحالة</button>`
-              : ''}
+          ? `<button class="btn btn-primary" data-accept-id="${v.id}">قبول الحالة</button>`
+          : ''}
             <a href="#doctor/visit/${v.id}" class="btn btn-ghost">فتح الحالة ←</a>
           </div>
         </div>
@@ -3971,7 +4080,7 @@ const DoctorView = {
             petName: visit.patients?.name || visit.intake_animal_type,
             eventType: 'doctor_patient_accepted',
             orderId: null,
-          }).catch(() => {});
+          }).catch(() => { });
           showToast('✅ تم قبول الحالة', 'success');
           window.location.hash = `#doctor/visit/${visitId}`;
         } catch (err) {
@@ -4073,16 +4182,44 @@ const DoctorVisitDetailView = {
                 <label class="form-field"><span>درجة الحرارة (°C)</span><input type="number" step="0.1" name="vital_temperature" value="${visit.vital_temperature ?? ''}"></label>
                 <label class="form-field"><span>الوزن (kg)</span><input type="number" step="0.1" name="vital_weight_kg" value="${visit.vital_weight_kg ?? ''}"></label>
                 <label class="form-field"><span>معدل النبض</span><input type="number" name="vital_heart_rate" value="${visit.vital_heart_rate ?? ''}"></label>
-                <label class="form-field">
+                <div class="doctor-form-field" style="margin-bottom: 20px;">
                   <span>درجة الخطورة</span>
-                  <select name="severity">
-                    <option value="">—</option>
-                    <option value="low" ${visit.severity === 'low' ? 'selected':''}>منخفضة</option>
-                    <option value="medium" ${visit.severity === 'medium' ? 'selected':''}>متوسطة</option>
-                    <option value="high" ${visit.severity === 'high' ? 'selected':''}>عالية</option>
-                    <option value="critical" ${visit.severity === 'critical' ? 'selected':''}>حرجة</option>
-                  </select>
-                </label>
+                  <div class="radix-select" id="severity-radix">
+                    <input type="hidden" name="severity" value="${visit.severity || ''}" />
+                    <button type="button" class="radix-select-trigger" aria-haspopup="listbox" aria-expanded="false" ${canEdit ? '' : 'disabled'}>
+                      <span class="radix-select-value">
+                        ${visit.severity === 'low' ? 'منخفضة' : visit.severity === 'medium' ? 'متوسطة' : visit.severity === 'high' ? 'عالية' : visit.severity === 'critical' ? 'حرجة' : '— اختر الخطورة —'}
+                      </span>
+                      <svg class="radix-caret" width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M4.93179 5.43179C4.75605 5.60753 4.75605 5.89245 4.93179 6.06819L7.43179 8.56819C7.60753 8.74393 7.89245 8.74393 8.06819 8.56819L10.5682 6.06819C10.7439 5.89245 10.7439 5.60753 10.5682 5.43179C10.3924 5.25605 10.1075 5.25605 9.93179 5.43179L7.5 7.86358L5.06819 5.43179C4.89245 5.25605 4.60753 5.25605 4.43179 5.43179Z" fill="currentColor"></path></svg>
+                    </button>
+                    <div class="radix-select-content" role="listbox">
+                      <div class="radix-select-item" role="option" data-value="low" data-state="${visit.severity === 'low' ? 'checked' : 'unchecked'}">
+                        <span class="radix-select-item-indicator">
+                          <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M11.4669 3.72684C11.7558 3.91574 11.8369 4.30308 11.648 4.59198L7.39799 11.092C7.29783 11.2452 7.13556 11.3467 6.95402 11.3699C6.77247 11.3931 6.58989 11.3355 6.45446 11.2124L3.70446 8.71241C3.44905 8.48022 3.43023 8.08494 3.66242 7.82953C3.89461 7.57412 4.28989 7.55529 4.5453 7.78749L6.75292 9.79441L10.6018 3.90792C10.7907 3.61902 11.178 3.53795 11.4669 3.72684Z" fill="currentColor"></path></svg>
+                        </span>
+                        <span class="radix-select-item-text">منخفضة</span>
+                      </div>
+                      <div class="radix-select-item" role="option" data-value="medium" data-state="${visit.severity === 'medium' ? 'checked' : 'unchecked'}">
+                        <span class="radix-select-item-indicator">
+                          <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M11.4669 3.72684C11.7558 3.91574 11.8369 4.30308 11.648 4.59198L7.39799 11.092C7.29783 11.2452 7.13556 11.3467 6.95402 11.3699C6.77247 11.3931 6.58989 11.3355 6.45446 11.2124L3.70446 8.71241C3.44905 8.48022 3.43023 8.08494 3.66242 7.82953C3.89461 7.57412 4.28989 7.55529 4.5453 7.78749L6.75292 9.79441L10.6018 3.90792C10.7907 3.61902 11.178 3.53795 11.4669 3.72684Z" fill="currentColor"></path></svg>
+                        </span>
+                        <span class="radix-select-item-text">متوسطة</span>
+                      </div>
+                      <div class="radix-select-item" role="option" data-value="high" data-state="${visit.severity === 'high' ? 'checked' : 'unchecked'}">
+                        <span class="radix-select-item-indicator">
+                          <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M11.4669 3.72684C11.7558 3.91574 11.8369 4.30308 11.648 4.59198L7.39799 11.092C7.29783 11.2452 7.13556 11.3467 6.95402 11.3699C6.77247 11.3931 6.58989 11.3355 6.45446 11.2124L3.70446 8.71241C3.44905 8.48022 3.43023 8.08494 3.66242 7.82953C3.89461 7.57412 4.28989 7.55529 4.5453 7.78749L6.75292 9.79441L10.6018 3.90792C10.7907 3.61902 11.178 3.53795 11.4669 3.72684Z" fill="currentColor"></path></svg>
+                        </span>
+                        <span class="radix-select-item-text">عالية</span>
+                      </div>
+                      <div class="radix-select-item" role="option" data-value="critical" data-state="${visit.severity === 'critical' ? 'checked' : 'unchecked'}">
+                        <span class="radix-select-item-indicator">
+                          <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M11.4669 3.72684C11.7558 3.91574 11.8369 4.30308 11.648 4.59198L7.39799 11.092C7.29783 11.2452 7.13556 11.3467 6.95402 11.3699C6.77247 11.3931 6.58989 11.3355 6.45446 11.2124L3.70446 8.71241C3.44905 8.48022 3.43023 8.08494 3.66242 7.82953C3.89461 7.57412 4.28989 7.55529 4.5453 7.78749L6.75292 9.79441L10.6018 3.90792C10.7907 3.61902 11.178 3.53795 11.4669 3.72684Z" fill="currentColor"></path></svg>
+                        </span>
+                        <span class="radix-select-item-text">حرجة</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
               <label class="form-field"><span>التشخيص</span><textarea name="diagnosis" rows="2">${escHtml(visit.diagnosis || '')}</textarea></label>
               <label class="form-field"><span>العلاج</span><textarea name="treatment" rows="2">${escHtml(visit.treatment || '')}</textarea></label>
@@ -4098,37 +4235,31 @@ const DoctorVisitDetailView = {
             <div id="ai-result" class="ai-result" style="display:none;"></div>
           </section>
 
-          <!-- Notes timeline -->
-          <section class="visit-card">
-            <h2>📝 الملاحظات الزمنية</h2>
-            ${canEdit ? `
-              <form id="add-note-form" class="note-form">
-                <textarea name="note" rows="2" placeholder="أضف ملاحظة..."></textarea>
-                <button type="submit" class="btn btn-sm btn-primary">إضافة</button>
-              </form>
-            ` : ''}
-            <ul id="notes-list" class="notes-list">
-              ${notes.map(n => `
-                <li>
-                  <div class="note-header">
-                    <span class="note-author" style="background:${escHtml(n.doctor?.avatar_color || '#7c3aed')}">${escHtml((n.doctor?.display_name || '؟').slice(0,1))}</span>
-                    <span>${escHtml(n.doctor?.display_name || '—')}</span>
-                    <small>${formatRelativeAr(n.created_at)}</small>
-                  </div>
-                  <div class="note-body">${escHtml(n.note)}</div>
-                </li>
-              `).join('') || '<li class="muted">لا توجد ملاحظات بعد.</li>'}
-            </ul>
-          </section>
-
           <!-- Appointments -->
           <section class="visit-card">
             <h2>📅 مواعيد المتابعة</h2>
             ${canEdit ? `
-              <form id="add-appt-form" class="appt-form">
-                <label class="form-field"><span>التاريخ والوقت</span><input type="datetime-local" name="scheduled_at" required></label>
-                <label class="form-field"><span>الغرض (اختياري)</span><input type="text" name="purpose" placeholder="متابعة، فحص، إلخ"></label>
-                <button type="submit" class="btn btn-sm btn-primary">➕ جدولة موعد</button>
+              <form id="add-appt-form" class="appt-form" style="display: flex; flex-direction: column; background: rgba(0,0,0,0.2); padding: 16px; border-radius: 12px; border: 1px solid rgba(192, 38, 211, 0.2); margin-bottom: 24px;">
+                <h3 style="color: var(--white); margin-bottom: 16px; font-size: 1rem;">📅 تحديد موعد مراجعة</h3>
+                
+                <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+                  <div class="doctor-form-field" style="flex: 2; min-width: 150px; margin-bottom: 0;">
+                    <span>يوم الموعد (التاريخ)</span>
+                    <input type="date" class="doctor-custom-input doctor-date-input" name="scheduled_date" style="padding: 10px; font-size: 0.9rem;" required>
+                  </div>
+                  
+                  <div class="doctor-form-field" style="flex: 1; min-width: 100px; margin-bottom: 0;">
+                    <span>الوقت</span>
+                    <input type="time" class="doctor-custom-input doctor-time-input" name="scheduled_time" style="padding: 10px; font-size: 0.9rem;" required>
+                  </div>
+                </div>
+
+                <div class="doctor-form-field" style="margin-bottom: 16px;">
+                  <span>الغرض من الموعد (اختياري)</span>
+                  <input type="text" class="doctor-custom-input" name="purpose" style="padding: 10px; font-size: 0.9rem;" placeholder="مثال: متابعة العلاج، إزالة الخيوط، فحص...">
+                </div>
+                
+                <button type="submit" class="btn btn-primary" style="width: 100%; font-size: 0.95rem; padding: 10px; border-radius: 8px;">➕ تأكيد وجدولة الموعد</button>
               </form>
             ` : ''}
             <ul id="appt-list" class="appt-list">
@@ -4137,7 +4268,7 @@ const DoctorVisitDetailView = {
                   <div>
                     <strong>${formatDateTimeAr(a.scheduled_at)}</strong>
                     ${a.purpose ? ` — ${escHtml(a.purpose)}` : ''}
-                    <span class="appt-status-pill">${({pending:'معلق',reminded:'تم التذكير',attended:'حضر',missed:'فوّت',cancelled:'ملغى'}[a.status]||a.status)}</span>
+                    <span class="appt-status-pill">${({ pending: 'معلق', reminded: 'تم التذكير', attended: 'حضر', missed: 'فوّت', cancelled: 'ملغى' }[a.status] || a.status)}</span>
                   </div>
                   ${canEdit && a.status !== 'attended' && a.status !== 'cancelled' ? `
                     <div class="appt-actions">
@@ -4201,9 +4332,50 @@ const DoctorVisitDetailView = {
 
     if (!canEdit) return;
 
-    // exam form save
     const examForm = document.getElementById('exam-form');
     if (examForm) {
+      // Radix-style select logic
+      const radixWrapper = document.getElementById('severity-radix');
+      if (radixWrapper && canEdit) {
+        const trigger = radixWrapper.querySelector('.radix-select-trigger');
+        const content = radixWrapper.querySelector('.radix-select-content');
+        const hiddenInput = radixWrapper.querySelector('input[type="hidden"]');
+        const valueSpan = radixWrapper.querySelector('.radix-select-value');
+        const items = content.querySelectorAll('.radix-select-item');
+
+        const closeMenu = (e) => {
+          if (!radixWrapper.contains(e.target)) {
+            radixWrapper.classList.remove('open');
+            trigger.setAttribute('aria-expanded', 'false');
+            document.removeEventListener('click', closeMenu);
+          }
+        };
+
+        trigger.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isOpen = radixWrapper.classList.toggle('open');
+          trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+          if (isOpen) {
+            document.addEventListener('click', closeMenu);
+          } else {
+            document.removeEventListener('click', closeMenu);
+          }
+        });
+
+        items.forEach(item => {
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            items.forEach(i => i.setAttribute('data-state', 'unchecked'));
+            item.setAttribute('data-state', 'checked');
+            hiddenInput.value = item.getAttribute('data-value');
+            valueSpan.textContent = item.querySelector('.radix-select-item-text').textContent;
+            radixWrapper.classList.remove('open');
+            trigger.setAttribute('aria-expanded', 'false');
+            document.removeEventListener('click', closeMenu);
+          });
+        });
+      }
+
       examForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(examForm);
@@ -4280,31 +4452,16 @@ const DoctorVisitDetailView = {
       });
     }
 
-    // add note
-    const noteForm = document.getElementById('add-note-form');
-    if (noteForm) {
-      noteForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const fd = new FormData(noteForm);
-        const note = String(fd.get('note') || '').trim();
-        if (!note) return;
-        try {
-          await DB.addVisitNote(visit.id, doctor.id, note);
-          noteForm.reset();
-          Router.navigate(`doctor/visit/${visit.id}`);
-        } catch (err) { showToast(err.message, 'error'); }
-      });
-    }
-
     // add appointment
     const apptForm = document.getElementById('add-appt-form');
     if (apptForm) {
       apptForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(apptForm);
-        const scheduledLocal = fd.get('scheduled_at');
-        if (!scheduledLocal) return;
-        const scheduled_at = new Date(scheduledLocal).toISOString();
+        const rawDate = fd.get('scheduled_date');
+        const rawTime = fd.get('scheduled_time');
+        if (!rawDate || !rawTime) return;
+        const scheduled_at = new Date(`${rawDate}T${rawTime}`).toISOString();
         try {
           await DB.addAppointment({
             visit_id: visit.id,
@@ -4382,7 +4539,7 @@ const DoctorChatView = {
       const color = m.sender?.avatar_color || '#7c3aed';
       return `
         <div class="chat-msg ${mine ? 'chat-mine' : ''}">
-          <span class="chat-avatar" style="background:${escHtml(color)}">${escHtml(senderName.slice(0,1))}</span>
+          <span class="chat-avatar" style="background:${escHtml(color)}">${escHtml(senderName.slice(0, 1))}</span>
           <div class="chat-bubble">
             <div class="chat-sender">${escHtml(senderName)}</div>
             <div class="chat-content">${escHtml(m.content)}</div>
@@ -4474,9 +4631,9 @@ const ReportsView = {
     const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     let start;
     if (this._period === 'day') start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    else if (this._period === 'week') { start = new Date(now); start.setDate(now.getDate() - 7); start.setHours(0,0,0,0); }
-    else if (this._period === 'year') { start = new Date(now); start.setFullYear(now.getFullYear() - 1); start.setHours(0,0,0,0); }
-    else { start = new Date(now); start.setMonth(now.getMonth() - 1); start.setHours(0,0,0,0); }
+    else if (this._period === 'week') { start = new Date(now); start.setDate(now.getDate() - 7); start.setHours(0, 0, 0, 0); }
+    else if (this._period === 'year') { start = new Date(now); start.setFullYear(now.getFullYear() - 1); start.setHours(0, 0, 0, 0); }
+    else { start = new Date(now); start.setMonth(now.getMonth() - 1); start.setHours(0, 0, 0, 0); }
     return { start, end };
   },
 
@@ -4656,7 +4813,7 @@ const AdminDoctorsView = {
         <tbody>
           ${doctors.map(d => `
             <tr>
-              <td><span class="doctor-pill" style="background:${escHtml(d.avatar_color || '#7c3aed')}">${escHtml((d.display_name || '؟').slice(0,1))}</span> د. ${escHtml(d.full_name)}</td>
+              <td><span class="doctor-pill" style="background:${escHtml(d.avatar_color || '#7c3aed')}">${escHtml((d.display_name || '؟').slice(0, 1))}</span> د. ${escHtml(d.full_name)}</td>
               <td>${escHtml(d.specialization || '—')}</td>
               <td>${escHtml(d.phone || '—')}</td>
               <td>${d.is_admin ? '<span class="admin-badge">👑 مدير</span>' : 'طبيب'}</td>
@@ -4702,28 +4859,30 @@ const EmployeesManagementView = {
 
     showLoading(container);
 
-    // Get doctors and employees data
-    const doctors = await DB.getAllDoctors();
-    const employees = await DB.getEmployees();
-    
+    // Run both queries in parallel to halve load time
+    const [doctors, employees] = await Promise.all([DB.getAllDoctors(), DB.getEmployees()]);
+
     // Group employees by specialization
     const groomers = employees.filter(e => e.specialization === 'groomer');
     const bathers = employees.filter(e => e.specialization === 'bather');
-    
+
     let html = `
-      <div class="page-header animate-in">
-        <h1>👥 إدارة الموظفين</h1>
-        <p>الأطباء والمسؤولين عن الحلاقة والتحميم</p>
+      <div class="page-header animate-in" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+        <div>
+          <h1>👥 إدارة الموظفين</h1>
+          <p>الأطباء والمسؤولين عن الحلاقة والتحميم</p>
+        </div>
+        <button class="btn btn-primary" id="add-employee-btn">➕ إضافة موظف</button>
       </div>
     `;
-    
+
     // === DOCTORS SECTION ===
     html += `
       <div class="employees-section animate-in-delay-1">
         <h2 class="section-title">🩺 الأطباء</h2>
         <div class="employees-grid">
     `;
-    
+
     if (doctors.length === 0) {
       html += `<div style="grid-column:1/-1; text-align:center; padding:32px; opacity:0.6;">لا يوجد أطباء حالياً</div>`;
     } else {
@@ -4731,16 +4890,16 @@ const EmployeesManagementView = {
         html += this._renderEmployeeCard(doc, 'doctor');
       });
     }
-    
+
     html += `</div></div>`;
-    
+
     // === GROOMERS SECTION ===
     html += `
       <div class="employees-section animate-in-delay-2">
         <h2 class="section-title">✂️ الحلاقين</h2>
         <div class="employees-grid">
     `;
-    
+
     if (groomers.length === 0) {
       html += `<div style="grid-column:1/-1; text-align:center; padding:32px; opacity:0.6;">لا يوجد حلاقين حالياً</div>`;
     } else {
@@ -4748,16 +4907,16 @@ const EmployeesManagementView = {
         html += this._renderEmployeeCard(emp, 'groomer');
       });
     }
-    
+
     html += `</div></div>`;
-    
+
     // === BATHERS SECTION ===
     html += `
       <div class="employees-section animate-in-delay-3">
         <h2 class="section-title">🛁 المحممين</h2>
         <div class="employees-grid">
     `;
-    
+
     if (bathers.length === 0) {
       html += `<div style="grid-column:1/-1; text-align:center; padding:32px; opacity:0.6;">لا يوجد محممين حالياً</div>`;
     } else {
@@ -4765,27 +4924,27 @@ const EmployeesManagementView = {
         html += this._renderEmployeeCard(emp, 'bather');
       });
     }
-    
+
     html += `</div></div>`;
-    
+
     container.innerHTML = html;
     this._bindEvents(container);
   },
-  
+
   _renderEmployeeCard(emp, type) {
     const initials = emp.name_ar?.substring(0, 2) || emp.display_name?.substring(0, 2) || '??';
     const isActive = emp.is_active !== false;
     const isDoctor = type === 'doctor';
     const isAdmin = isDoctor && emp.is_admin;
-    
+
     const statusText = isActive ? 'نشط ✅' : 'معطل ⚠️';
     const statusColor = isActive ? '#10b981' : '#ef4444';
-    
+
     let typeLabel = '👤 موظف';
     if (isDoctor) typeLabel = '🩺 طبيب';
     else if (type === 'groomer') typeLabel = '✂️ حلاق';
     else if (type === 'bather') typeLabel = '🛁 المحمم';
-    
+
     return `
       <div class="employee-card" data-id="${emp.id}" data-type="${type}">
         <div class="employee-card-header">
@@ -4842,17 +5001,20 @@ const EmployeesManagementView = {
       </div>
     `;
   },
-  
+
   _bindEvents(container) {
+    // Add Employee button
+    container.querySelector('#add-employee-btn')?.addEventListener('click', () => {
+      this._showAddEmployeeModal(container);
+    });
+
     // Edit button
     container.querySelectorAll('.edit-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const id = btn.dataset.id;
-        const type = btn.dataset.type;
         showToast('📝 خاصية التعديل ستُضاف قريباً', 'info');
       });
     });
-    
+
     // Toggle status button
     container.querySelectorAll('.toggle-status-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -4860,13 +5022,14 @@ const EmployeesManagementView = {
         const type = btn.dataset.type;
         const isCurrentlyActive = btn.dataset.active === 'true';
         const newStatus = !isCurrentlyActive;
-        
         if (!confirm(`هل تريد ${newStatus ? 'تفعيل' : 'تعطيل'} هذا الموظف؟`)) return;
-        
         try {
           btn.disabled = true;
           if (type === 'doctor') {
             await DB.toggleDoctorActive(id, newStatus);
+          } else {
+            await supabaseClient.from('employees').update({ is_active: newStatus }).eq('id', id);
+            DB._employeesCache = null;
           }
           showToast(`✅ تم ${newStatus ? 'تفعيل' : 'تعطيل'} الموظف`, 'success');
           await this.render(container);
@@ -4877,15 +5040,106 @@ const EmployeesManagementView = {
         }
       });
     });
-    
+
     // Delete button
     container.querySelectorAll('.delete-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const id = btn.dataset.id;
-        const type = btn.dataset.type;
-        if (!confirm('⚠️ هل أنت متأكد من حذف هذا الموظف؟ سيؤدي هذا إلى فقدان جميع البيانات المرتبطة به.')) return;
-        showToast('🔒 حذف الموظفين ممنوع للحماية. تواصل مع المسؤول.', 'warning');
+        if (!confirm('⚠️ هل أنت متأكد من حذف هذا الموظف؟')) return;
+        showToast('🔒 حذف الحسابات يتم من لوحة Supabase مباشرة.', 'warning');
       });
+    });
+  },
+
+  _showAddEmployeeModal(container) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card animate-in" style="max-width:420px; width:90%;">
+        <h2 style="margin-bottom:20px;">➕ إضافة موظف جديد</h2>
+        <div id="emp-modal-error" class="login-alert" style="display:none; margin-bottom:12px;">
+          <span>❌</span><span id="emp-modal-error-msg"></span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">الاسم بالعربي *</label>
+          <input type="text" class="form-input" id="emp-name-ar" placeholder="مثال: أحمد علي">
+        </div>
+        <div class="form-group">
+          <label class="form-label">الاسم بالإنجليزي</label>
+          <input type="text" class="form-input" id="emp-name-en" placeholder="Ahmed Ali" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label class="form-label">التخصص *</label>
+          <select class="form-input" id="emp-spec">
+            <option value="groomer">✂️ حلاق</option>
+            <option value="bather">🛁 محمم</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">البريد الإلكتروني *</label>
+          <input type="email" class="form-input" id="emp-email" placeholder="ahmed@alkokh.com" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label class="form-label">كلمة المرور *</label>
+          <input type="password" class="form-input" id="emp-password" placeholder="8 أحرف على الأقل" dir="ltr">
+        </div>
+        <div style="display:flex; gap:12px; margin-top:24px;">
+          <button class="btn btn-primary btn-lg" id="emp-save-btn" style="flex:1;">
+            <span id="emp-save-text">💾 حفظ</span>
+            <span id="emp-save-loading" style="display:none;"><span class="btn-spinner"></span></span>
+          </button>
+          <button class="btn btn-ghost btn-lg" id="emp-cancel-btn" style="flex:1;">إلغاء</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#emp-cancel-btn').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#emp-save-btn').addEventListener('click', async () => {
+      const nameAr = overlay.querySelector('#emp-name-ar').value.trim();
+      const nameEn = overlay.querySelector('#emp-name-en').value.trim();
+      const spec = overlay.querySelector('#emp-spec').value;
+      const email = overlay.querySelector('#emp-email').value.trim();
+      const password = overlay.querySelector('#emp-password').value;
+      const errDiv = overlay.querySelector('#emp-modal-error');
+      const errMsg = overlay.querySelector('#emp-modal-error-msg');
+
+      if (!nameAr || !email || !password) {
+        errDiv.style.display = 'flex';
+        errMsg.textContent = 'الرجاء تعبئة جميع الحقول المطلوبة (*)';
+        return;
+      }
+      if (password.length < 6) {
+        errDiv.style.display = 'flex';
+        errMsg.textContent = 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
+        return;
+      }
+
+      overlay.querySelector('#emp-save-text').style.display = 'none';
+      overlay.querySelector('#emp-save-loading').style.display = 'inline';
+      overlay.querySelector('#emp-save-btn').disabled = true;
+      errDiv.style.display = 'none';
+
+      try {
+        const session = await supabaseClient.auth.getSession();
+        const token = session.data.session?.access_token;
+        const { data, error } = await supabaseClient.functions.invoke('create-employee', {
+          body: { email, password, name_ar: nameAr, name_en: nameEn || nameAr, specialization: spec },
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (error || !data?.success) throw new Error(data?.error || error?.message || 'فشل الإنشاء');
+        showToast(`✅ تم إنشاء حساب ${nameAr} بنجاح`, 'success');
+        DB._employeesCache = null;
+        overlay.remove();
+        await this.render(container);
+      } catch (err) {
+        errDiv.style.display = 'flex';
+        errMsg.textContent = err.message;
+        overlay.querySelector('#emp-save-text').style.display = 'inline';
+        overlay.querySelector('#emp-save-loading').style.display = 'none';
+        overlay.querySelector('#emp-save-btn').disabled = false;
+      }
     });
   }
 };
