@@ -4,82 +4,32 @@
    These tokens are what views and components reference.
    ============================================================ */
 
-:root,
-:root[data-theme="light"] {
+:root {
   /* Surfaces */
-  --bg-app:      var(--gray-50);
-  --bg-surface:  var(--gray-0);
-  --bg-elevated: var(--gray-0);
-  --bg-sunken:   var(--gray-100);
-
-  /* Glass panels (used on dark backgrounds normally; muted in light) */
-  --surface-glass:        rgba(255, 255, 255, 0.7);
-  --surface-glass-border: rgba(15, 18, 24, 0.06);
-  --surface-glass-blur:   saturate(180%) blur(14px);
-
-  /* Text */
-  --fg-primary:   var(--gray-900);
-  --fg-secondary: var(--gray-600);
-  --fg-muted:     var(--gray-400);
-  --fg-on-brand:  var(--gray-0);
-
-  /* Borders */
-  --border-subtle: var(--gray-200);
-  --border-strong: var(--gray-300);
-
-  /* Brand semantics */
-  --brand:         var(--brand-500);
-  --brand-hover:   var(--brand-600);
-  --brand-active:  var(--brand-700);
-  --brand-soft:    var(--brand-50);
-  --brand-soft-fg: var(--brand-700);
-
-  /* Focus */
-  --focus-ring: 0 0 0 4px rgba(139, 92, 246, 0.22);
-
-  /* Shadows (ink-tinted) */
-  --sh-xs: 0 1px 2px rgba(16, 18, 27, 0.05);
-  --sh-sm: 0 2px 4px rgba(16, 18, 27, 0.06), 0 1px 2px rgba(16, 18, 27, 0.04);
-  --sh-md: 0 8px 20px -6px rgba(16, 18, 27, 0.10), 0 2px 4px rgba(16, 18, 27, 0.04);
-  --sh-lg: 0 24px 48px -12px rgba(16, 18, 27, 0.14);
-  --sh-ring-brand: 0 0 0 4px rgba(139, 92, 246, 0.14);
-
-  /* Status backgrounds */
-  --bg-waiting:  rgba(245, 158, 11, 0.12);
-  --bg-assigned: rgba(59, 130, 246, 0.12);
-  --bg-progress: rgba(139, 92, 246, 0.12);
-  --bg-success:  rgba(16, 185, 129, 0.12);
-  --bg-danger:   rgba(239, 68, 68, 0.12);
-
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  /* Surfaces */
-  --bg-app:      var(--gray-1000);
-  --bg-surface:  rgba(255, 255, 255, 0.04);
+  --bg-app: var(--gray-1000);
+  --bg-surface: rgba(255, 255, 255, 0.04);
   --bg-elevated: rgba(255, 255, 255, 0.06);
-  --bg-sunken:   rgba(0, 0, 0, 0.3);
+  --bg-sunken: rgba(0, 0, 0, 0.3);
 
-  --surface-glass:        rgba(255, 255, 255, 0.06);
+  --surface-glass: rgba(255, 255, 255, 0.06);
   --surface-glass-border: rgba(255, 255, 255, 0.12);
-  --surface-glass-blur:   saturate(180%) blur(16px);
+  --surface-glass-blur: saturate(180%) blur(16px);
 
   /* Text */
-  --fg-primary:   var(--gray-50);
+  --fg-primary: var(--gray-50);
   --fg-secondary: var(--gray-300);
-  --fg-muted:     var(--gray-400);
-  --fg-on-brand:  var(--gray-0);
+  --fg-muted: var(--gray-400);
+  --fg-on-brand: var(--gray-0);
 
   /* Borders */
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
 
-  /* Brand semantics (subdued one step for dark comfort) */
-  --brand:         var(--brand-400);
-  --brand-hover:   var(--brand-300);
-  --brand-active:  var(--brand-200);
-  --brand-soft:    rgba(139, 92, 246, 0.16);
+  /* Brand semantics (dark mode optimized) */
+  --brand: var(--brand-400);
+  --brand-hover: var(--brand-300);
+  --brand-active: var(--brand-200);
+  --brand-soft: rgba(139, 92, 246, 0.16);
   --brand-soft-fg: var(--brand-200);
 
   /* Focus */
@@ -93,26 +43,11 @@
   --sh-ring-brand: 0 0 0 4px rgba(167, 139, 250, 0.25);
 
   /* Status backgrounds */
-  --bg-waiting:  rgba(245, 158, 11, 0.18);
+  --bg-waiting: rgba(245, 158, 11, 0.18);
   --bg-assigned: rgba(59, 130, 246, 0.18);
   --bg-progress: rgba(167, 139, 250, 0.18);
-  --bg-success:  rgba(16, 185, 129, 0.18);
-  --bg-danger:   rgba(239, 68, 68, 0.18);
+  --bg-success: rgba(16, 185, 129, 0.18);
+  --bg-danger: rgba(239, 68, 68, 0.18);
 
   color-scheme: dark;
-}
-
-/* Auto dark-mode when user hasn't explicitly chosen.
-   theme.js sets [data-theme] explicitly, so this is the fallback
-   for environments that load the CSS before the bootstrap IIFE. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    --bg-app:      var(--gray-1000);
-    --bg-surface:  rgba(255, 255, 255, 0.04);
-    --bg-elevated: rgba(255, 255, 255, 0.06);
-    --fg-primary:  var(--gray-50);
-    --fg-secondary:var(--gray-300);
-    --brand:       var(--brand-400);
-    color-scheme: dark;
-  }
 }

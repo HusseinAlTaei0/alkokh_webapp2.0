@@ -3821,3 +3821,151 @@ dialog.dlg::backdrop {
 .radix-cal-day.today.selected {
   color: #fff;
 }
+
+/* === UI FIXES for Text Inputs & Back Button === */
+.btn-back-oval {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--purple-400);
+  background: var(--bg-card);
+  color: var(--purple-700);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  transition: all var(--duration-fast);
+  cursor: pointer;
+}
+
+.btn-back-oval:hover {
+  background: var(--purple-100);
+  border-color: var(--purple-600);
+  color: var(--purple-900);
+}
+
+.chat-form input,
+.visit-exam input,
+.visit-exam textarea,
+.doctor-custom-input,
+.appt-form input {
+  color: #111827 !important;
+}
+
+.chat-form input::placeholder,
+.visit-exam input::placeholder,
+.visit-exam textarea::placeholder,
+.doctor-custom-input::placeholder,
+.appt-form input::placeholder {
+  color: #6b7280 !important;
+}
+
+/* === GLASSSMORPHISM FOR DOCTOR CASES (Refined Typography) === */
+.case-card,
+.case-card.status-waiting,
+.case-card.status-in_progress,
+.case-card.status-completed {
+  background: rgba(0, 0, 0, 0.2) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+  padding: 24px !important;
+  color: #fff !important;
+}
+
+/* Typography Overrides */
+.case-card h3 {
+  font-size: 1.25rem !important;
+  font-weight: 700 !important;
+  color: #fff !important;
+  margin: 0 0 8px 0 !important;
+  letter-spacing: -0.01em !important;
+}
+
+.case-card .case-meta {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 12px !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.case-card .case-meta span {
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.case-card .case-symptoms,
+.case-card .case-doctor {
+  font-size: 0.9rem !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  margin-top: 16px !important;
+  line-height: 1.6 !important;
+}
+
+.case-card .case-symptoms strong {
+  color: #fff !important;
+  font-weight: 700 !important;
+}
+
+.case-card .case-card-status {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  gap: 6px !important;
+}
+
+.case-card .case-card-status small {
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-weight: 500 !important;
+}
+
+/* Refined Status Pills to match glassmorphism */
+.case-card .status-pill {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #fff !important;
+  border-radius: 8px !important;
+  padding: 4px 12px !important;
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+}
+
+.case-card .status-pill.status-waiting {
+  background: rgba(245, 158, 11, 0.2) !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  color: #fcd34d !important;
+}
+
+.case-card .status-pill.status-in_progress {
+  background: rgba(192, 38, 211, 0.2) !important;
+  border-color: rgba(192, 38, 211, 0.3) !important;
+  color: #f0abfc !important;
+}
+
+.case-card .status-pill.status-completed {
+  background: rgba(16, 185, 129, 0.2) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #6ee7b7 !important;
+}
+
+/* === CHAT SENT BUBBLE READABILITY === */
+.chat-mine .chat-bubble {
+  color: #111827 !important;
+}
+
+.chat-mine .chat-bubble .chat-content {
+  color: #111827 !important;
+}
+
+.chat-mine .chat-bubble .chat-time {
+  color: #4b5563 !important;
+}
+
+.chat-mine .chat-sender {
+  color: #111827 !important;
+}

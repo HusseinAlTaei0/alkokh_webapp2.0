@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -12,19 +13,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
   <!-- FOUC-prevention: apply theme before stylesheets load -->
   <script>
     (function () {
-      try {
-        var stored = localStorage.getItem('alkokh-theme');
-        var mode = (stored === 'light' || stored === 'dark')
-          ? stored
-          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        document.documentElement.setAttribute('data-theme', mode);
-      } catch (e) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      }
+      document.documentElement.setAttribute('data-theme', 'dark');
     })();
   </script>
   <!-- Styles first (render-critical) -->
@@ -36,6 +31,7 @@
   <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@04f46c6/qrcode.min.js" defer></script>
   <!-- Chart.js loaded on-demand by DashboardView (not here) -->
 </head>
+
 <body>
   <!-- Animated Background -->
   <div id="animated-bg" class="animated-bg"></div>
@@ -48,29 +44,6 @@
         <span class="nav-title">الكوخ</span>
       </div>
       <div class="nav-actions">
-        <button
-          id="theme-toggle"
-          type="button"
-          class="theme-toggle"
-          aria-label="التبديل إلى الوضع الداكن"
-          aria-pressed="false">
-          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="4" fill="currentColor"/>
-            <g stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <line x1="12" y1="2"  x2="12" y2="5"/>
-              <line x1="12" y1="19" x2="12" y2="22"/>
-              <line x1="2"  y1="12" x2="5"  y2="12"/>
-              <line x1="19" y1="12" x2="22" y2="12"/>
-              <line x1="4.2" y1="4.2"   x2="6.3"  y2="6.3"/>
-              <line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/>
-              <line x1="4.2" y1="19.8"  x2="6.3"  y2="17.7"/>
-              <line x1="17.7" y1="6.3"  x2="19.8" y2="4.2"/>
-            </g>
-          </svg>
-          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" fill="currentColor"/>
-          </svg>
-        </button>
         <button id="logout-btn" class="logout-btn" style="display:none;" title="تسجيل الخروج">
           <span class="logout-icon">🚪</span>
           <span class="logout-text">خروج</span>
@@ -148,11 +121,14 @@
 
   <!-- Sound for notifications -->
   <audio id="notification-sound" preload="none">
-    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH+Jj4+LhoJ9eXd3eXyBhYmNj42KhoJ+fHp5eXyAhImNj46LhoJ9end4eHuAhImOj4+LiIN+fHt6fH+DhomMjIqHg398e3p7f4OHioyNjIiEgH58fH1/goaJi4yLiISAfn18fYCDh4qMjIuIhIB+fXx9gIOHiouMi4iEgH58fH2Ag4eKi4yLiISBf359fYCDh4mLi4qHg4B+fX19gIKGiYuLioeDgH5+fn+BhIeJiomHhIGAfn5+gIKFh4mJiIaCgH9+fn+BhIaIiYmHhIKAf35/gIKEhoeIh4WCgH9+f4CCg4WHh4aFg4GAfn5/gIGDhYaHhoSDgYB/f3+AgYOFhoeGhIOBgH9/f4CBg4WHhoWDgYB/f3+AgYOFhoaFg4GAf39/gIGDhYaGhYOBgH9/f4CBg4WHhoWDgYB/f4CAgYOFhoaFg4GAf39/gIGDhIaFhIOBgH9/gICBg4SEhYSDAICAgH+AgIGCg4SEBIKEAICAAIA=" type="audio/wav">
+    <source
+      src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH+Jj4+LhoJ9eXd3eXyBhYmNj42KhoJ+fHp5eXyAhImNj46LhoJ9end4eHuAhImOj4+LiIN+fHt6fH+DhomMjIqHg398e3p7f4OHioyNjIiEgH58fH1/goaJi4yLiISAfn18fYCDh4qMjIuIhIB+fXx9gIOHiouMi4iEgH58fH2Ag4eKi4yLiISBf359fYCDh4mLi4qHg4B+fX19gIKGiYuLioeDgH5+fn+BhIeJiomHhIGAfn5+gIKFh4mJiIaCgH9+fn+BhIaIiYmHhIKAf35/gIKEhoeIh4WCgH9+f4CCg4WHh4aFg4GAfn5/gIGDhYaHhoSDgYB/f3+AgYOFhoeGhIOBgH9/f4CBg4WHhoWDgYB/f3+AgYOFhoaFg4GAf39/gIGDhYaGhYOBgH9/f4CBg4WHhoWDgYB/f4CAgYOFhoaFg4GAf39/gIGDhIaFhIOBgH9/gICBg4SEhYSDAICAgH+AgIGCg4SEBIKEAICAAIA="
+      type="audio/wav">
   </audio>
 
   <!-- Scripts: config first, then app logic -->
   <script src="config.js" defer></script>
   <script src="main.js" defer></script>
 </body>
+
 </html>

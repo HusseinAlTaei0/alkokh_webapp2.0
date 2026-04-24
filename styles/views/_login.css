@@ -24,12 +24,7 @@
   opacity: 0.9;
 }
 
-[data-theme="light"] .login-container::before {
-  background:
-    radial-gradient(ellipse at 30% 20%, rgba(139, 92, 246, 0.18), transparent 55%),
-    radial-gradient(ellipse at 80% 60%, rgba(196, 181, 253, 0.20), transparent 60%);
-  opacity: 0.7;
-}
+
 
 .login-card {
   background: var(--surface-glass);
@@ -47,8 +42,8 @@
 
 .login-header {
   background: linear-gradient(180deg,
-              color-mix(in oklab, var(--brand) 12%, transparent) 0%,
-              transparent 100%);
+      color-mix(in oklab, var(--brand) 12%, transparent) 0%,
+      transparent 100%);
   padding: var(--sp-10) var(--sp-8) var(--sp-6);
 }
 
@@ -89,8 +84,8 @@
   color: var(--fg-primary) !important;
   border-radius: var(--r-md) !important;
   transition: border-color var(--t-fast) var(--ease-out),
-              box-shadow var(--t-fast) var(--ease-out),
-              background var(--t-fast) var(--ease-out) !important;
+    box-shadow var(--t-fast) var(--ease-out),
+    background var(--t-fast) var(--ease-out) !important;
 }
 
 .login-input::placeholder {
@@ -159,9 +154,11 @@
   .login-header {
     padding: var(--sp-8) var(--sp-5) var(--sp-4);
   }
+
   .login-body {
     padding: var(--sp-5);
   }
+
   .login-footer {
     padding: var(--sp-4) var(--sp-5) var(--sp-5);
   }

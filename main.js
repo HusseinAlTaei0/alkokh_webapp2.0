@@ -4,72 +4,8 @@
    with Supabase Authentication & Database
    ============================================= */
 
-// ==========================================
-// THEME MODULE (light/dark mode)
-// ==========================================
-const Theme = {
-  _key: 'alkokh-theme',
-  _manualFlag: 'alkokh-theme-manual',
+// Theme is now hardcoded to 'dark' in index.html, no switching logic needed.
 
-  get() {
-    try {
-      const stored = localStorage.getItem(this._key);
-      if (stored === 'light' || stored === 'dark') return stored;
-    } catch (_) { }
-    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-    return mq && mq.matches ? 'dark' : 'light';
-  },
-
-  set(mode, manual = true) {
-    if (mode !== 'light' && mode !== 'dark') return;
-    document.documentElement.dataset.theme = mode;
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', mode === 'dark' ? '#070910' : '#F5F3FF');
-    try {
-      localStorage.setItem(this._key, mode);
-      if (manual) localStorage.setItem(this._manualFlag, '1');
-    } catch (_) { }
-    this._refreshBtn();
-  },
-
-  toggle() { this.set(this.get() === 'dark' ? 'light' : 'dark'); },
-
-  _refreshBtn() {
-    const btn = document.getElementById('theme-toggle');
-    if (!btn) return;
-    const mode = this.get();
-    btn.setAttribute('aria-pressed', mode === 'dark' ? 'true' : 'false');
-    btn.setAttribute('aria-label', mode === 'dark' ? 'التبديل إلى الوضع الفاتح' : 'التبديل إلى الوضع الداكن');
-    btn.dataset.mode = mode;
-  },
-
-  init() {
-    // Apply saved theme immediately
-    this.set(this.get(), false);
-
-    // Bind toggle button
-    document.addEventListener('DOMContentLoaded', () => {
-      const btn = document.getElementById('theme-toggle');
-      if (btn && !btn.dataset.bound) {
-        btn.dataset.bound = '1';
-        btn.addEventListener('click', () => this.toggle());
-        this._refreshBtn();
-      }
-    });
-
-    // Watch system preference
-    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-    if (mq) {
-      const handler = (e) => {
-        try { if (localStorage.getItem(this._manualFlag) === '1') return; } catch (_) { }
-        this.set(e.matches ? 'dark' : 'light', false);
-      };
-      if (mq.addEventListener) mq.addEventListener('change', handler);
-      else if (mq.addListener) mq.addListener(handler);
-    }
-  }
-};
-Theme.init();
 
 // ==========================================
 // AUTH MODULE
@@ -1831,7 +1767,7 @@ const LoginView = {
           </div>
 
           <div class="login-footer">
-            <a href="#home" class="login-back-link">← العودة للرئيسية</a>
+            <a href="#home" class="login-back-link btn-back-oval">← العودة للرئيسية</a>
           </div>
         </div>
       </div>
@@ -2055,7 +1991,7 @@ const BookingView = {
 
     html += `</div>
       <div style="text-align:center; margin-top:20px;">
-        <button class="btn btn-ghost" id="back-to-step1">→ رجوع</button>
+        <button class="btn btn-back-oval" id="back-to-step1">← رجوع</button>
       </div>`;
 
     el.innerHTML = html;
@@ -2141,7 +2077,7 @@ const BookingView = {
             </span>
           </button>
           <div style="text-align:center; margin-top:16px;">
-            <button class="btn btn-ghost" id="back-to-step2">→ رجوع</button>
+            <button class="btn btn-back-oval" id="back-to-step2">← رجوع</button>
           </div>
         </div>
       </div>
@@ -3649,7 +3585,7 @@ const MedicalIntakeView = {
     container.innerHTML = `
       <div class="intake-view animate-in">
         <div class="intake-header">
-          <a href="#home" class="back-link">← عودة</a>
+          <a href="#home" class="btn-back-oval">← عودة</a>
           <h1>🩺 زيارة طبيب</h1>
           <p>يرجى تعبئة البيانات ليتم توجيهك للطبيب المختص</p>
         </div>
@@ -3949,7 +3885,7 @@ const PatientProfileView = {
       container.innerHTML = `
         <div class="patient-profile animate-in">
           <div class="intake-header">
-            <a href="#home" class="back-link">← عودة</a>
+            <a href="#home" class="btn-back-oval">← عودة</a>
             <h1>📋 ملف الحيوان</h1>
           </div>
 
@@ -4086,7 +4022,7 @@ const DoctorView = {
             <div>
               <h3>${escHtml(v.intake_customer_name)}</h3>
               <div class="case-meta">
-                <span>📞 ${escHtml(v.intake_phone)}</span>
+                <span>📞 ${Auth.isClinicAdmin() ? escHtml(v.intake_phone) : escHtml((v.intake_phone || '').substring(0, 4) + '***' + (v.intake_phone || '').substring((v.intake_phone || '').length - 3))}</span>
                 ${v.intake_area ? `<span>📍 ${escHtml(v.intake_area)}</span>` : ''}
                 <span>🐾 ${escHtml(pet)}${v.intake_animal_age ? ` · ${escHtml(v.intake_animal_age)}` : ''}</span>
               </div>
@@ -4178,7 +4114,7 @@ const DoctorVisitDetailView = {
 
     container.innerHTML = `
       <div class="visit-detail animate-in">
-        <div class="visit-back"><a href="#doctor" class="back-link">← عودة للحالات</a></div>
+        <div class="visit-back"><a href="#doctor" class="btn-back-oval">← عودة للحالات</a></div>
 
         <div class="visit-header">
           <div>
@@ -4570,7 +4506,7 @@ const DoctorChatView = {
     container.innerHTML = `
       <div class="chat-view animate-in">
         <div class="chat-header">
-          <a href="#doctor" class="back-link">← عودة</a>
+          <a href="#doctor" class="btn-back-oval">← عودة</a>
           <h1>💬 چات الفريق</h1>
           <p>تواصل مباشر بين الأطباء</p>
         </div>
@@ -4645,7 +4581,7 @@ const ReportsView = {
     container.innerHTML = `
       <div class="reports-view animate-in">
         <div class="reports-header">
-          <a href="${backLink}" class="back-link">← عودة</a>
+          <a href="${backLink}" class="btn-back-oval">← عودة</a>
           <h1>📊 التقارير</h1>
         </div>
         <div class="period-filter">
