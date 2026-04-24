@@ -1630,15 +1630,27 @@ const Router = {
         return;
       }
     }
-    if (head === 'employees' || head === 'reports') {
+    if (head === 'employees') {
       if (!Auth.isAuthenticated()) {
         this.currentView = 'login';
         LoginView.render($('#app'), head);
         return;
       }
-      // هاتين الصفحتين للمدير فقط
       if (!Auth.isClinicAdmin()) {
         showToast('⛔ هذه الصفحة للمدير فقط', 'warning');
+        window.location.hash = '#home';
+        return;
+      }
+    }
+    if (head === 'reports') {
+      if (!Auth.isAuthenticated()) {
+        this.currentView = 'login';
+        LoginView.render($('#app'), 'reports');
+        return;
+      }
+      // التقارير للأطباء والمدراء
+      if (!Auth.isClinicAdmin() && !Auth.isDoctor()) {
+        showToast('⛔ هذه الصفحة للأطباء والمدراء فقط', 'warning');
         window.location.hash = '#home';
         return;
       }
@@ -1730,10 +1742,10 @@ const Router = {
         await OperatorView.render(app);
         break;
       case 'reports':
-        await DashboardView.render(app);
+        await ReportsView.render(app);
         break;
       case 'dashboard':
-        await DashboardView.render(app);
+        await ReportsView.render(app);
         break;
       case 'doctor':
         if (subPath[0] === 'visit' && subPath[1]) {
@@ -1741,7 +1753,8 @@ const Router = {
         } else if (subPath[0] === 'chat') {
           await DoctorChatView.render(app);
         } else if (subPath[0] === 'reports') {
-          await ReportsView.render(app);
+          // إعادة توجيه قديم → صفحة التقارير الموحدة
+          window.location.hash = '#reports';
         } else {
           await DoctorView.render(app);
         }
@@ -1795,7 +1808,7 @@ const LoginView = {
             </div>
             <div class="form-group">
               <label class="form-label">البريد الإلكتروني</label>
-              <input type="email" class="form-input login-input" id="login-email" placeholder="user@alkokh.com" autocomplete="email" dir="ltr">
+              <input type="email" class="form-input login-input" id="login-email" placeholder="user@alkokh.com" autocomplete="email" dir="ltr" value="${localStorage.getItem('alkokh_remember_email') || ''}">
             </div>
             <div class="form-group">
               <label class="form-label">كلمة المرور</label>
@@ -1803,6 +1816,11 @@ const LoginView = {
                 <input type="password" class="form-input login-input" id="login-password" placeholder="••••••••" autocomplete="current-password" dir="ltr">
                 <button class="password-toggle" id="toggle-password" type="button" title="إظهار/إخفاء">👁️</button>
               </div>
+            </div>
+            <div class="form-group" style="display:flex; align-items:center; gap:10px; margin-top:-4px;">
+              <input type="checkbox" id="remember-me" style="width:18px; height:18px; accent-color: var(--purple-500); cursor:pointer;"
+                ${localStorage.getItem('alkokh_remember_email') ? 'checked' : ''}>
+              <label for="remember-me" style="color:var(--text-muted); font-size:0.9rem; cursor:pointer; user-select:none;">تذكرني</label>
             </div>
             <button class="btn btn-primary btn-lg btn-block login-submit" id="login-submit">
               <span id="login-btn-text">🔐 تسجيل الدخول</span>
@@ -1853,6 +1871,13 @@ const LoginView = {
       let navigated = false;
       try {
         await Auth.login(email, password);
+        // حفظ الإيميل إذا فعّل "تذكرني"
+        const rememberMe = container.querySelector('#remember-me')?.checked;
+        if (rememberMe) {
+          localStorage.setItem('alkokh_remember_email', email);
+        } else {
+          localStorage.removeItem('alkokh_remember_email');
+        }
         showToast('تم تسجيل الدخول بنجاح! مرحباً بك 👋', 'success');
         playNotificationSound();
         let dest = null;
@@ -3993,7 +4018,7 @@ const DoctorView = {
           </div>
           <div class="doctor-header-actions">
             <a href="#doctor/chat" class="btn btn-ghost">💬 الچات</a>
-            <a href="#doctor/reports" class="btn btn-ghost">📊 التقارير</a>
+            <a href="#reports" class="btn btn-ghost">📊 التقارير</a>
             ${doctor.is_admin ? '<a href="#admin/doctors" class="btn btn-ghost">👨‍⚕️ الأطباء</a>' : ''}
           </div>
         </div>
@@ -4175,7 +4200,7 @@ const DoctorVisitDetailView = {
           <section class="visit-card">
             <h2>🐾 معلومات المريض</h2>
             <div class="info-row"><strong>الزبون:</strong> ${escHtml(visit.intake_customer_name)}</div>
-            <div class="info-row"><strong>الهاتف:</strong> ${escHtml(visit.intake_phone)}</div>
+            ${Auth.isClinicAdmin() ? `<div class="info-row"><strong>الهاتف:</strong> ${escHtml(visit.intake_phone)}</div>` : ''}
             <div class="info-row"><strong>المنطقة:</strong> ${escHtml(visit.intake_area || '—')}</div>
             <div class="info-row"><strong>الحيوان:</strong> ${escHtml(visit.patients?.name || '—')} (${escHtml(visit.intake_animal_type)})</div>
             <div class="info-row"><strong>العمر:</strong> ${escHtml(visit.intake_animal_age || '—')}</div>
@@ -4616,11 +4641,12 @@ const ReportsView = {
   _period: 'month',
 
   async render(container) {
+    const backLink = Auth.isDoctor() ? '#doctor' : '#home';
     container.innerHTML = `
       <div class="reports-view animate-in">
         <div class="reports-header">
-          <a href="#doctor" class="back-link">← عودة</a>
-          <h1>📊 تقارير العيادة</h1>
+          <a href="${backLink}" class="back-link">← عودة</a>
+          <h1>📊 التقارير</h1>
         </div>
         <div class="period-filter">
           <button class="period-btn ${this._period === 'day' ? 'active' : ''}" data-period="day">اليوم</button>
