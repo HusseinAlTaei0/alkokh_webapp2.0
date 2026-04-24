@@ -193,20 +193,28 @@ const Auth = {
       logoutBtn.style.display = this._user ? 'flex' : 'none';
     }
 
-    // Update lock icons in menu
-    const locks = document.querySelectorAll('.menu-lock');
-    locks.forEach(lock => {
-      lock.style.display = this._user ? 'none' : 'inline';
-    });
-
-    // Show/hide doctor-only menu items
-    const doctorLinks = document.querySelectorAll('.menu-link[data-role="doctor"]');
-    doctorLinks.forEach(l => {
-      l.style.display = this.isDoctor() ? '' : 'none';
-    });
-    const adminLinks = document.querySelectorAll('.menu-link[data-role="clinic-admin"]');
-    adminLinks.forEach(l => {
-      l.style.display = this.isClinicAdmin() ? '' : 'none';
+    // تحكم كامل بالقائمة حسب الدور
+    const allMenuLinks = document.querySelectorAll('.menu-link[data-role]');
+    allMenuLinks.forEach(link => {
+      const role = link.dataset.role;
+      let show = false;
+      if (role === 'anonymous') {
+        // يظهر فقط للزوار غير المسجلين
+        show = !this._user;
+      } else if (role === 'employee') {
+        // يظهر للموظفين فقط
+        show = this.isEmployee();
+      } else if (role === 'doctor') {
+        // يظهر للأطباء والمدراء
+        show = this.isDoctor() || this.isClinicAdmin();
+      } else if (role === 'operator') {
+        // يظهر للمنظمين والمدراء
+        show = this.isOperator() || this.isClinicAdmin();
+      } else if (role === 'clinic-admin') {
+        // يظهر للمدراء فقط
+        show = this.isClinicAdmin();
+      }
+      link.style.display = show ? '' : 'none';
     });
   }
 };
@@ -1628,9 +1636,9 @@ const Router = {
         LoginView.render($('#app'), head);
         return;
       }
-      // التقارير مسموحة فقط للأدمن
-      if (head === 'reports' && !Auth.isClinicAdmin()) {
-        showToast('⛔ هذه الصفحة للأدمن فقط', 'warning');
+      // هاتين الصفحتين للمدير فقط
+      if (!Auth.isClinicAdmin()) {
+        showToast('⛔ هذه الصفحة للمدير فقط', 'warning');
         window.location.hash = '#home';
         return;
       }
@@ -1641,8 +1649,20 @@ const Router = {
         LoginView.render($('#app'), head);
         return;
       }
-      if (!Auth.isClinicAdmin() && !Auth.isOperator() && !Auth.isDoctor()) {
-        showToast('⛔ هذه الصفحة للمنظمين والأطباء فقط', 'warning');
+      if (!Auth.isClinicAdmin() && !Auth.isOperator()) {
+        showToast('⛔ هذه الصفحة للمنظمين والمدراء فقط', 'warning');
+        window.location.hash = '#home';
+        return;
+      }
+    }
+    if (head === 'case-history') {
+      if (!Auth.isAuthenticated()) {
+        this.currentView = 'login';
+        LoginView.render($('#app'), 'case-history');
+        return;
+      }
+      if (!Auth.isClinicAdmin() && !Auth.isOperator()) {
+        showToast('⛔ هذه الصفحة للمنظمين والمدراء فقط', 'warning');
         window.location.hash = '#home';
         return;
       }
@@ -1685,6 +1705,9 @@ const Router = {
     switch (head) {
       case 'home':
         await LandingView.render(app);
+        break;
+      case 'login':
+        LoginView.render(app);
         break;
       case 'booking':
         if (subPath[0] === 'medical') {
@@ -1729,6 +1752,9 @@ const Router = {
         } else {
           await LandingView.render(app);
         }
+        break;
+      case 'case-history':
+        await CaseHistoryView.render(app);
         break;
       case 'patient':
         await PatientProfileView.render(app, subPath[0]);
@@ -5147,6 +5173,36 @@ const EmployeesManagementView = {
 
 // ==========================================
 // INITIALIZATION
+// ==========================================
+// CASE HISTORY VIEW
+// ==========================================
+const CaseHistoryView = {
+  async render(container) {
+    container.innerHTML = `
+      <div class="operator-view animate-in" style="padding: 32px 24px; max-width: 900px; margin: 0 auto;">
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 32px;">
+          <div style="font-size: 2.5rem;">📜</div>
+          <div>
+            <h1 style="color: var(--white); font-size: 1.8rem; margin: 0;">تاريخ الحالات</h1>
+            <p style="color: var(--text-muted); margin: 4px 0 0;">سجل جميع الحالات السابقة في العيادة</p>
+          </div>
+        </div>
+        <div style="
+          background: rgba(255,255,255,0.04);
+          border: 1px dashed rgba(192,38,211,0.3);
+          border-radius: 16px;
+          padding: 64px 32px;
+          text-align: center;
+        ">
+          <div style="font-size: 3rem; margin-bottom: 16px;">🚧</div>
+          <h2 style="color: var(--white); margin-bottom: 8px;">قيد التطوير</h2>
+          <p style="color: var(--text-muted);">هذه الصفحة ستكون جاهزة قريباً</p>
+        </div>
+      </div>
+    `;
+  }
+};
+
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
   try {

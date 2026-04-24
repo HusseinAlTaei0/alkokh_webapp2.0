@@ -85,40 +85,54 @@
   <!-- Fullscreen Menu Overlay -->
   <div id="fullscreen-menu" class="fullscreen-menu">
     <div class="menu-content">
+      <!-- الصفحة الرئيسية: للجميع -->
       <a href="#home" class="menu-link" data-view="home">
         <span class="menu-number">01</span>
         <span class="menu-text">الصفحة الرئيسية</span>
       </a>
-      <a href="#employees" class="menu-link" data-view="employees">
+      <!-- تسجيل الدخول: للزوار فقط -->
+      <a href="#login" class="menu-link" data-role="anonymous" data-view="login">
         <span class="menu-number">02</span>
-        <span class="menu-text">صفحة الموظفين</span>
-        <span class="menu-lock">🔒</span>
+        <span class="menu-text">تسجيل الدخول 🔐</span>
       </a>
-      <a href="#operator" class="menu-link" data-view="operator">
+      <!-- صفحة المهام: للموظفين فقط -->
+      <a href="#employee" class="menu-link" data-role="employee" data-view="employee" style="display:none;">
         <span class="menu-number">03</span>
-        <span class="menu-text">المنظم</span>
-        <span class="menu-lock">🔒</span>
+        <span class="menu-text">صفحة المهام 📋</span>
       </a>
-      <a href="#reports" class="menu-link" data-view="reports">
+      <!-- صفحات الطبيب -->
+      <a href="#doctor" class="menu-link" data-role="doctor" data-view="doctor" style="display:none;">
         <span class="menu-number">04</span>
-        <span class="menu-text">التقارير</span>
-        <span class="menu-lock">🔒</span>
-      </a>
-      <!-- Hidden: Doctor & Admin links (shown only when authenticated as doctor/admin) -->
-      <a href="#doctor" class="menu-link" data-view="doctor" data-role="doctor" style="display:none;">
-        <span class="menu-number">05</span>
         <span class="menu-text">لوحة الطبيب 🩺</span>
       </a>
-      <a href="#doctor/chat" class="menu-link" data-view="doctor" data-role="doctor" style="display:none;">
-        <span class="menu-number">06</span>
+      <a href="#doctor/chat" class="menu-link" data-role="doctor" data-view="doctor" style="display:none;">
+        <span class="menu-number">05</span>
         <span class="menu-text">چات الفريق 💬</span>
       </a>
-      <a href="#doctor/reports" class="menu-link" data-view="doctor" data-role="doctor" style="display:none;">
-        <span class="menu-number">07</span>
+      <a href="#doctor/reports" class="menu-link" data-role="doctor" data-view="doctor" style="display:none;">
+        <span class="menu-number">06</span>
         <span class="menu-text">تقارير العيادة 📊</span>
       </a>
-      <a href="#admin/doctors" class="menu-link" data-view="admin" data-role="clinic-admin" style="display:none;">
+      <!-- صفحات المنظم (operator + admin) -->
+      <a href="#operator" class="menu-link" data-role="operator" data-view="operator" style="display:none;">
+        <span class="menu-number">07</span>
+        <span class="menu-text">صفحة المنظم 🗂️</span>
+      </a>
+      <a href="#case-history" class="menu-link" data-role="operator" data-view="case-history" style="display:none;">
         <span class="menu-number">08</span>
+        <span class="menu-text">تاريخ الحالات 📜</span>
+      </a>
+      <!-- صفحات المدير فقط -->
+      <a href="#employees" class="menu-link" data-role="clinic-admin" data-view="employees" style="display:none;">
+        <span class="menu-number">09</span>
+        <span class="menu-text">إدارة الموظفين 👷</span>
+      </a>
+      <a href="#reports" class="menu-link" data-role="clinic-admin" data-view="reports" style="display:none;">
+        <span class="menu-number">10</span>
+        <span class="menu-text">التقارير 📈</span>
+      </a>
+      <a href="#admin/doctors" class="menu-link" data-role="clinic-admin" data-view="admin" style="display:none;">
+        <span class="menu-number">11</span>
         <span class="menu-text">إدارة الأطباء 👨‍⚕️</span>
       </a>
     </div>
