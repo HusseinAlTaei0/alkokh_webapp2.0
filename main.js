@@ -961,6 +961,119 @@ const DB = {
     return { visits: visits || [], syms: syms || [], doctors: docs || [] };
   },
 
+  async getDoctorReportStats(doctorId, fromISO, toISO) {
+    const { data: visits } = await supabaseClient
+      .from('visits')
+      .select('id, status, severity, primary_doctor_id, intake_animal_type, intake_customer_name, created_at')
+      .eq('primary_doctor_id', doctorId)
+      .gte('created_at', fromISO).lte('created_at', toISO);
+    const visitIds = (visits || []).map(v => v.id);
+    let syms = [];
+    if (visitIds.length) {
+      const { data: s } = await supabaseClient
+        .from('visit_symptoms')
+        .select('symptom_key, visit_id')
+        .in('visit_id', visitIds);
+      syms = s || [];
+    }
+    return { visits: visits || [], syms };
+  },
+
+  async getClinicReportStats(fromISO, toISO) {
+    const base = await this.getReportStats(fromISO, toISO);
+    const { data: orders } = await supabaseClient
+      .from('orders')
+      .select('id, status, employee_id, service_id, duration_actual, created_at, completed_at, services(category, type_ar)')
+      .gte('created_at', fromISO).lte('created_at', toISO);
+    const { data: emps } = await supabaseClient
+      .from('employees')
+      .select('id, name_ar, specialization, is_active');
+    return { ...base, orders: orders || [], employees: emps || [] };
+  },
+
+  // --- Case History (search across visits + orders) ---
+  async searchCaseHistory(query) {
+    const q = (query || '').trim();
+    const limit = q ? 100 : 50;
+
+    let visitsQ = supabaseClient
+      .from('visits')
+      .select('id, status, severity, created_at, primary_doctor_id, intake_animal_type, intake_customer_name, intake_phone, intake_notes, patient_id, customer_id, primary_doctor:doctors!visits_primary_doctor_id_fkey(display_name, full_name), patients(name, animal_type, breed), customers(name, phone)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (q) {
+      const like = `%${q}%`;
+      visitsQ = visitsQ.or(`intake_phone.ilike.${like},intake_customer_name.ilike.${like},intake_animal_type.ilike.${like}`);
+    }
+
+    let ordersQ = supabaseClient
+      .from('orders')
+      .select('id, status, customer_name, customer_phone, pet_name, pet_type, notes, created_at, started_at, completed_at, duration_actual, employee_id, employees(name_ar, specialization), services(type_ar, category)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (q) {
+      const like = `%${q}%`;
+      ordersQ = ordersQ.or(`customer_phone.ilike.${like},customer_name.ilike.${like},pet_name.ilike.${like}`);
+    }
+
+    const [visitsRes, ordersRes] = await Promise.all([visitsQ, ordersQ]);
+    const visits = visitsRes.data || [];
+    const orders = ordersRes.data || [];
+
+    // fetch collaborators for matched visits
+    const visitIds = visits.map(v => v.id);
+    let collabsByVisit = {};
+    if (visitIds.length) {
+      const { data: collabs } = await supabaseClient
+        .from('visit_collaborators')
+        .select('visit_id, doctor:doctors(display_name)')
+        .in('visit_id', visitIds);
+      (collabs || []).forEach(c => {
+        if (!collabsByVisit[c.visit_id]) collabsByVisit[c.visit_id] = [];
+        if (c.doctor?.display_name) collabsByVisit[c.visit_id].push(c.doctor.display_name);
+      });
+    }
+
+    const items = [];
+    visits.forEach(v => items.push({
+      kind: 'medical',
+      id: v.id,
+      created_at: v.created_at,
+      status: v.status,
+      severity: v.severity,
+      owner_name: v.customers?.name || v.intake_customer_name || '—',
+      owner_phone: v.customers?.phone || v.intake_phone || '',
+      pet_name: v.patients?.name || '',
+      pet_type: v.patients?.animal_type || v.intake_animal_type || '',
+      handler: v.primary_doctor?.display_name ? `د. ${v.primary_doctor.display_name}` : '—',
+      collaborators: collabsByVisit[v.id] || [],
+      patient_id: v.patient_id,
+      raw: v,
+    }));
+    orders.forEach(o => {
+      const cat = o.services?.category || '';
+      const isBath = cat.includes('bath') || /حمام|تحميم/.test(o.services?.type_ar || '');
+      items.push({
+        kind: isBath ? 'bath' : 'grooming',
+        id: o.id,
+        created_at: o.created_at,
+        status: o.status,
+        severity: null,
+        owner_name: o.customer_name || '—',
+        owner_phone: o.customer_phone || '',
+        pet_name: o.pet_name || '',
+        pet_type: o.pet_type || '',
+        handler: o.employees?.name_ar || '—',
+        service_name: o.services?.type_ar || '',
+        duration_actual: o.duration_actual,
+        raw: o,
+      });
+    });
+
+    items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return items;
+  },
+
   async getRecentAIReports(limit = 20) {
     const { data } = await supabaseClient
       .from('ai_reports')
@@ -1678,10 +1791,23 @@ const Router = {
         await OperatorView.render(app);
         break;
       case 'reports':
-        await ReportsView.render(app);
+        if (subPath[0] === 'medical') {
+          if (!Auth.isDoctor()) { window.location.hash = '#home'; break; }
+          await MedicalReportsView.render(app);
+        } else if (subPath[0] === 'clinic') {
+          if (!Auth.isClinicAdmin()) { window.location.hash = '#home'; break; }
+          await ClinicReportsView.render(app);
+        } else {
+          // Backward-compat: route to the right page based on role
+          if (Auth.isClinicAdmin()) window.location.hash = '#reports/clinic';
+          else if (Auth.isDoctor()) window.location.hash = '#reports/medical';
+          else window.location.hash = '#home';
+        }
         break;
       case 'dashboard':
-        await ReportsView.render(app);
+        if (Auth.isClinicAdmin()) window.location.hash = '#reports/clinic';
+        else if (Auth.isDoctor()) window.location.hash = '#reports/medical';
+        else window.location.hash = '#home';
         break;
       case 'doctor':
         if (subPath[0] === 'visit' && subPath[1]) {
@@ -1689,8 +1815,7 @@ const Router = {
         } else if (subPath[0] === 'chat') {
           await DoctorChatView.render(app);
         } else if (subPath[0] === 'reports') {
-          // إعادة توجيه قديم → صفحة التقارير الموحدة
-          window.location.hash = '#reports';
+          window.location.hash = '#reports/medical';
         } else {
           await DoctorView.render(app);
         }
@@ -1703,6 +1828,7 @@ const Router = {
         }
         break;
       case 'case-history':
+        if (!Auth.isOperator() && !Auth.isClinicAdmin()) { window.location.hash = '#home'; break; }
         await CaseHistoryView.render(app);
         break;
       case 'patient':
@@ -4573,17 +4699,182 @@ const DoctorChatView = {
 // =============================================================
 // REPORTS VIEW — statistics + AI-generated reports
 // =============================================================
-const ReportsView = {
+// Shared helpers for reports views
+const ReportsCommon = {
+  getPeriodRange(period) {
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    let start;
+    if (period === 'day') start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    else if (period === 'week') { start = new Date(now); start.setDate(now.getDate() - 7); start.setHours(0, 0, 0, 0); }
+    else if (period === 'year') { start = new Date(now); start.setFullYear(now.getFullYear() - 1); start.setHours(0, 0, 0, 0); }
+    else { start = new Date(now); start.setMonth(now.getMonth() - 1); start.setHours(0, 0, 0, 0); }
+    return { start, end };
+  },
+  bar(obj) {
+    return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) =>
+      `<div class="bar-row"><span class="bar-label">${escHtml(k)}</span><div class="bar"><div class="bar-fill" style="width:${Math.min(100, v * 10)}%"></div><span class="bar-val">${v}</span></div></div>`
+    ).join('');
+  }
+};
+
+// =============================================================
+// MEDICAL REPORTS — per-doctor personal stats
+// =============================================================
+const MedicalReportsView = {
   _period: 'month',
 
   async render(container) {
-    const backLink = Auth.isDoctor() ? '#doctor' : '#home';
+    const doc = Auth.getDoctor();
+    const docName = doc?.display_name || 'طبيب';
     container.innerHTML = `
       <div class="reports-view animate-in">
         <div class="reports-header">
-          <a href="${backLink}" class="btn-back-oval">← عودة</a>
-          <h1>📊 التقارير</h1>
+          <a href="#doctor" class="btn-back-oval">← عودة</a>
+          <h1>📊 تقاريري الطبية</h1>
         </div>
+        <p class="muted" style="text-align:center; margin-bottom:8px;">إحصائيات الحالات التي تولّاها د. ${escHtml(docName)}</p>
+        <div class="period-filter">
+          <button class="period-btn ${this._period === 'day' ? 'active' : ''}" data-period="day">اليوم</button>
+          <button class="period-btn ${this._period === 'week' ? 'active' : ''}" data-period="week">الأسبوع</button>
+          <button class="period-btn ${this._period === 'month' ? 'active' : ''}" data-period="month">الشهر</button>
+          <button class="period-btn ${this._period === 'year' ? 'active' : ''}" data-period="year">السنة</button>
+        </div>
+        <div id="stats-panel" class="stats-panel"></div>
+        <div class="reports-actions">
+          <button id="generate-ai-report" class="btn btn-primary">📊 ولّد تقرير بالذكاء الصناعي</button>
+        </div>
+        <div id="ai-report-output" class="ai-report-output" style="display:none;"></div>
+        <div class="saved-reports">
+          <h2>📁 تقاريري المحفوظة</h2>
+          <div id="saved-list"></div>
+        </div>
+      </div>
+    `;
+
+    $$('.period-btn').forEach(b => b.addEventListener('click', async () => {
+      this._period = b.dataset.period;
+      $$('.period-btn').forEach(x => x.classList.toggle('active', x === b));
+      await this._loadStats();
+    }));
+
+    $('#generate-ai-report').addEventListener('click', () => this._generateAIReport());
+
+    await this._loadStats();
+    await this._loadSavedReports();
+  },
+
+  async _loadStats() {
+    const pane = $('#stats-panel');
+    pane.innerHTML = '<div class="loading-spinner"></div>';
+    const doc = Auth.getDoctor();
+    if (!doc) { pane.innerHTML = '<p class="muted">تعذر تحميل ملف الطبيب</p>'; return; }
+    const { start, end } = ReportsCommon.getPeriodRange(this._period);
+    const stats = await DB.getDoctorReportStats(doc.id, start.toISOString(), end.toISOString());
+
+    const byStatus = {}, bySeverity = {}, byAnimal = {}, bySymptom = {};
+    for (const v of stats.visits) {
+      byStatus[v.status] = (byStatus[v.status] || 0) + 1;
+      if (v.severity) bySeverity[v.severity] = (bySeverity[v.severity] || 0) + 1;
+      if (v.intake_animal_type) byAnimal[v.intake_animal_type] = (byAnimal[v.intake_animal_type] || 0) + 1;
+    }
+    for (const s of stats.syms) {
+      const label = SYMPTOM_LABEL[s.symptom_key] || s.symptom_key;
+      bySymptom[label] = (bySymptom[label] || 0) + 1;
+    }
+    const total = stats.visits.length;
+    const completed = byStatus.completed || 0;
+    const completionRate = total ? Math.round((completed / total) * 100) : 0;
+    const topSymptom = Object.entries(bySymptom).sort((a, b) => b[1] - a[1])[0];
+
+    pane.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">حالاتك الكلية</div></div>
+        <div class="stat-card"><div class="stat-num">${completed}</div><div class="stat-label">مكتملة</div></div>
+        <div class="stat-card"><div class="stat-num">${byStatus.in_progress || 0}</div><div class="stat-label">قيد المعالجة</div></div>
+        <div class="stat-card"><div class="stat-num">${completionRate}%</div><div class="stat-label">نسبة الإنجاز</div></div>
+      </div>
+      <div class="stats-two-col">
+        <div class="stat-panel">
+          <h3>🔥 أكثر الأعراض في حالاتك</h3>
+          <p>${topSymptom ? `${escHtml(topSymptom[0])} — ${topSymptom[1]} حالة` : '—'}</p>
+          ${ReportsCommon.bar(bySymptom) || '<p class="muted">لا بيانات</p>'}
+        </div>
+        <div class="stat-panel">
+          <h3>⚠️ درجة الخطورة</h3>
+          ${ReportsCommon.bar(bySeverity) || '<p class="muted">لا بيانات</p>'}
+        </div>
+      </div>
+      <div class="stats-two-col">
+        <div class="stat-panel"><h3>🐾 نوع الحيوان</h3>${ReportsCommon.bar(byAnimal) || '<p class="muted">لا بيانات</p>'}</div>
+        <div class="stat-panel"><h3>📋 حالة الزيارات</h3>${ReportsCommon.bar(byStatus) || '<p class="muted">لا بيانات</p>'}</div>
+      </div>
+    `;
+  },
+
+  async _generateAIReport() {
+    const btn = $('#generate-ai-report');
+    const out = $('#ai-report-output');
+    const { start, end } = ReportsCommon.getPeriodRange(this._period);
+    btn.disabled = true;
+    btn.textContent = '⏳ جاري التوليد...';
+    out.style.display = 'block';
+    out.innerHTML = '<div class="loading-spinner"></div>';
+    try {
+      const r = await AI.generateReport({
+        period_start: start.toISOString().slice(0, 10),
+        period_end: end.toISOString().slice(0, 10),
+        report_type: this._period,
+        scope: 'doctor',
+        doctor_id: Auth.getDoctor()?.id,
+      });
+      out.innerHTML = `<div class="report-box">
+        <div class="report-meta">${escHtml(r.report?.period_start)} → ${escHtml(r.report?.period_end)}</div>
+        <div class="report-content">${renderMarkdown(r.report?.content_md || '')}</div>
+        <p class="ai-disclaimer">${escHtml(r.disclaimer || '')}</p>
+      </div>`;
+      await this._loadSavedReports();
+    } catch (err) {
+      out.innerHTML = `<div class="ai-error">❌ ${escHtml(err.message || 'فشل التوليد')}</div>`;
+    }
+    btn.disabled = false;
+    btn.textContent = '📊 ولّد تقرير بالذكاء الصناعي';
+  },
+
+  async _loadSavedReports() {
+    const list = $('#saved-list');
+    if (!list) return;
+    const doc = Auth.getDoctor();
+    const reports = (await DB.getRecentAIReports(50))
+      .filter(r => !doc || r.generated_by?.id === doc.id || r.generated_by_id === doc.id);
+    if (!reports.length) { list.innerHTML = '<p class="muted">لا توجد تقارير محفوظة بعد.</p>'; return; }
+    list.innerHTML = reports.map(r => `
+      <div class="saved-item">
+        <div class="saved-header">
+          <strong>${escHtml(r.report_type || '—')}</strong>
+          <span>${escHtml(r.period_start)} → ${escHtml(r.period_end)}</span>
+          <small>${formatDateTimeAr(r.created_at)}</small>
+        </div>
+        <details><summary>عرض التقرير</summary><div class="report-content">${renderMarkdown(r.content_md || '')}</div></details>
+      </div>
+    `).join('');
+  }
+};
+
+// =============================================================
+// CLINIC REPORTS — full clinic-wide stats (admin only)
+// =============================================================
+const ClinicReportsView = {
+  _period: 'month',
+
+  async render(container) {
+    container.innerHTML = `
+      <div class="reports-view animate-in">
+        <div class="reports-header">
+          <a href="#home" class="btn-back-oval">← عودة</a>
+          <h1>📊 تقارير العيادة</h1>
+        </div>
+        <p class="muted" style="text-align:center; margin-bottom:8px;">إحصائيات شاملة لكل أقسام العيادة</p>
         <div class="period-filter">
           <button class="period-btn ${this._period === 'day' ? 'active' : ''}" data-period="day">اليوم</button>
           <button class="period-btn ${this._period === 'week' ? 'active' : ''}" data-period="week">الأسبوع</button>
@@ -4614,22 +4905,11 @@ const ReportsView = {
     await this._loadSavedReports();
   },
 
-  _getPeriodRange() {
-    const now = new Date();
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-    let start;
-    if (this._period === 'day') start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    else if (this._period === 'week') { start = new Date(now); start.setDate(now.getDate() - 7); start.setHours(0, 0, 0, 0); }
-    else if (this._period === 'year') { start = new Date(now); start.setFullYear(now.getFullYear() - 1); start.setHours(0, 0, 0, 0); }
-    else { start = new Date(now); start.setMonth(now.getMonth() - 1); start.setHours(0, 0, 0, 0); }
-    return { start, end };
-  },
-
   async _loadStats() {
     const pane = $('#stats-panel');
     pane.innerHTML = '<div class="loading-spinner"></div>';
-    const { start, end } = this._getPeriodRange();
-    const stats = await DB.getReportStats(start.toISOString(), end.toISOString());
+    const { start, end } = ReportsCommon.getPeriodRange(this._period);
+    const stats = await DB.getClinicReportStats(start.toISOString(), end.toISOString());
 
     const byStatus = {}, bySeverity = {}, byDoctor = {}, byAnimal = {}, bySymptom = {};
     const docMap = {};
@@ -4648,12 +4928,30 @@ const ReportsView = {
       bySymptom[label] = (bySymptom[label] || 0) + 1;
     }
 
+    // Orders / employees breakdown
+    const orders = stats.orders || [];
+    const empMap = {};
+    (stats.employees || []).forEach(e => empMap[e.id] = e.name_ar || '—');
+    const ordersByStatus = {}, ordersByService = {}, ordersByEmployee = {};
+    let totalDuration = 0, durationCount = 0;
+    for (const o of orders) {
+      ordersByStatus[o.status] = (ordersByStatus[o.status] || 0) + 1;
+      const svc = o.services?.type_ar || '—';
+      ordersByService[svc] = (ordersByService[svc] || 0) + 1;
+      if (o.employee_id) {
+        const n = empMap[o.employee_id] || '—';
+        ordersByEmployee[n] = (ordersByEmployee[n] || 0) + 1;
+      }
+      if (o.duration_actual) { totalDuration += o.duration_actual; durationCount++; }
+    }
+    const avgDuration = durationCount ? Math.round(totalDuration / durationCount) : 0;
+
     const topDoctor = Object.entries(byDoctor).sort((a, b) => b[1] - a[1])[0];
     const topSymptom = Object.entries(bySymptom).sort((a, b) => b[1] - a[1])[0];
-
-    const bar = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `<div class="bar-row"><span class="bar-label">${escHtml(k)}</span><div class="bar"><div class="bar-fill" style="width:${Math.min(100, v * 10)}%"></div><span class="bar-val">${v}</span></div></div>`).join('');
+    const topEmployee = Object.entries(ordersByEmployee).sort((a, b) => b[1] - a[1])[0];
 
     pane.innerHTML = `
+      <h2 style="color:var(--white); margin:8px 0;">🩺 القسم الطبي</h2>
       <div class="stats-grid">
         <div class="stat-card"><div class="stat-num">${stats.visits.length}</div><div class="stat-label">إجمالي الحالات</div></div>
         <div class="stat-card"><div class="stat-num">${byStatus.completed || 0}</div><div class="stat-label">مكتملة</div></div>
@@ -4665,18 +4963,37 @@ const ReportsView = {
           <h3>🏆 الطبيب المميز</h3>
           <p>${topDoctor ? `د. ${escHtml(topDoctor[0])} — ${topDoctor[1]} حالة` : '—'}</p>
           <h4>حالات لكل طبيب</h4>
-          ${bar(byDoctor) || '<p class="muted">لا بيانات</p>'}
+          ${ReportsCommon.bar(byDoctor) || '<p class="muted">لا بيانات</p>'}
         </div>
         <div class="stat-panel">
           <h3>🔥 أكثر الأعراض</h3>
           <p>${topSymptom ? `${escHtml(topSymptom[0])} — ${topSymptom[1]} حالة` : '—'}</p>
-          <h4>توزيع الأعراض</h4>
-          ${bar(bySymptom) || '<p class="muted">لا بيانات</p>'}
+          ${ReportsCommon.bar(bySymptom) || '<p class="muted">لا بيانات</p>'}
         </div>
       </div>
       <div class="stats-two-col">
-        <div class="stat-panel"><h3>🐾 نوع الحيوان</h3>${bar(byAnimal) || '<p class="muted">لا بيانات</p>'}</div>
-        <div class="stat-panel"><h3>⚠️ درجة الخطورة</h3>${bar(bySeverity) || '<p class="muted">لا بيانات</p>'}</div>
+        <div class="stat-panel"><h3>🐾 نوع الحيوان</h3>${ReportsCommon.bar(byAnimal) || '<p class="muted">لا بيانات</p>'}</div>
+        <div class="stat-panel"><h3>⚠️ درجة الخطورة</h3>${ReportsCommon.bar(bySeverity) || '<p class="muted">لا بيانات</p>'}</div>
+      </div>
+
+      <h2 style="color:var(--white); margin:24px 0 8px;">✂️ قسم التنظيف والتحميم</h2>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-num">${orders.length}</div><div class="stat-label">إجمالي الطلبات</div></div>
+        <div class="stat-card"><div class="stat-num">${ordersByStatus.completed || 0}</div><div class="stat-label">مكتملة</div></div>
+        <div class="stat-card"><div class="stat-num">${(ordersByStatus.in_progress || 0) + (ordersByStatus.assigned || 0)}</div><div class="stat-label">قيد التنفيذ</div></div>
+        <div class="stat-card"><div class="stat-num">${avgDuration}<span style="font-size:0.6em;"> د</span></div><div class="stat-label">متوسط المدة</div></div>
+      </div>
+      <div class="stats-two-col">
+        <div class="stat-panel">
+          <h3>🏆 الموظف المميز</h3>
+          <p>${topEmployee ? `${escHtml(topEmployee[0])} — ${topEmployee[1]} طلب` : '—'}</p>
+          <h4>طلبات لكل موظف</h4>
+          ${ReportsCommon.bar(ordersByEmployee) || '<p class="muted">لا بيانات</p>'}
+        </div>
+        <div class="stat-panel">
+          <h3>📋 توزيع الخدمات</h3>
+          ${ReportsCommon.bar(ordersByService) || '<p class="muted">لا بيانات</p>'}
+        </div>
       </div>
     `;
   },
@@ -4684,7 +5001,7 @@ const ReportsView = {
   async _generateAIReport() {
     const btn = $('#generate-ai-report');
     const out = $('#ai-report-output');
-    const { start, end } = this._getPeriodRange();
+    const { start, end } = ReportsCommon.getPeriodRange(this._period);
     btn.disabled = true;
     btn.textContent = '⏳ جاري التوليد...';
     out.style.display = 'block';
@@ -4694,6 +5011,7 @@ const ReportsView = {
         period_start: start.toISOString().slice(0, 10),
         period_end: end.toISOString().slice(0, 10),
         report_type: this._period,
+        scope: 'clinic',
       });
       out.innerHTML = `<div class="report-box">
         <div class="report-meta">${escHtml(r.report?.period_start)} → ${escHtml(r.report?.period_end)}</div>
@@ -5139,26 +5457,138 @@ const EmployeesManagementView = {
 // CASE HISTORY VIEW
 // ==========================================
 const CaseHistoryView = {
+  _searchTimer: null,
+  _filter: 'all', // all | medical | grooming | bath
+  _query: '',
+
   async render(container) {
     container.innerHTML = `
-      <div class="operator-view animate-in" style="padding: 32px 24px; max-width: 900px; margin: 0 auto;">
-        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 32px;">
+      <div class="case-history-view animate-in" style="padding: 32px 24px; max-width: 1100px; margin: 0 auto;">
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px;">
           <div style="font-size: 2.5rem;">📜</div>
           <div>
             <h1 style="color: var(--white); font-size: 1.8rem; margin: 0;">تاريخ الحالات</h1>
-            <p style="color: var(--text-muted); margin: 4px 0 0;">سجل جميع الحالات السابقة في العيادة</p>
+            <p style="color: var(--text-muted); margin: 4px 0 0;">ابحث في سجل الحالات الطبية ومهام التنظيف/التحميم</p>
           </div>
         </div>
-        <div style="
-          background: rgba(255,255,255,0.04);
-          border: 1px dashed rgba(192,38,211,0.3);
-          border-radius: 16px;
-          padding: 64px 32px;
-          text-align: center;
-        ">
-          <div style="font-size: 3rem; margin-bottom: 16px;">🚧</div>
-          <h2 style="color: var(--white); margin-bottom: 8px;">قيد التطوير</h2>
-          <p style="color: var(--text-muted);">هذه الصفحة ستكون جاهزة قريباً</p>
+
+        <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(192,38,211,0.18); border-radius: 16px; padding: 16px; margin-bottom: 16px;">
+          <input id="ch-search" type="search" placeholder="🔍 ابحث برقم الهاتف أو اسم الحيوان أو اسم صاحب الحيوان..." autocomplete="off"
+            style="width:100%; padding:14px 16px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.3); color:var(--white); font-size:1rem; outline:none;">
+          <div id="ch-filters" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;">
+            <button class="ch-filter-btn active" data-filter="all" style="${this._btnStyle(true)}">الكل</button>
+            <button class="ch-filter-btn" data-filter="medical" style="${this._btnStyle(false)}">🩺 طبية</button>
+            <button class="ch-filter-btn" data-filter="grooming" style="${this._btnStyle(false)}">✂️ حلاقة</button>
+            <button class="ch-filter-btn" data-filter="bath" style="${this._btnStyle(false)}">🛁 تحميم</button>
+          </div>
+        </div>
+
+        <div id="ch-results"></div>
+      </div>
+    `;
+
+    const input = $('#ch-search');
+    input.addEventListener('input', (e) => {
+      this._query = e.target.value;
+      clearTimeout(this._searchTimer);
+      this._searchTimer = setTimeout(() => this._loadResults(), 300);
+    });
+
+    $$('.ch-filter-btn').forEach(b => b.addEventListener('click', () => {
+      this._filter = b.dataset.filter;
+      $$('.ch-filter-btn').forEach(x => {
+        const active = x === b;
+        x.classList.toggle('active', active);
+        x.setAttribute('style', this._btnStyle(active));
+      });
+      this._loadResults();
+    }));
+
+    await this._loadResults();
+  },
+
+  _btnStyle(active) {
+    return active
+      ? 'padding:8px 16px; border-radius:999px; border:1px solid #c026d3; background:rgba(192,38,211,0.2); color:var(--white); cursor:pointer; font-size:0.9rem;'
+      : 'padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:var(--text-muted); cursor:pointer; font-size:0.9rem;';
+  },
+
+  async _loadResults() {
+    const out = $('#ch-results');
+    out.innerHTML = '<div class="loading-spinner" style="margin:32px auto;"></div>';
+    let items = [];
+    try {
+      items = await DB.searchCaseHistory(this._query);
+    } catch (err) {
+      console.error(err);
+      out.innerHTML = '<div style="text-align:center; color:#fca5a5; padding:32px;">حدث خطأ أثناء البحث</div>';
+      return;
+    }
+
+    if (this._filter !== 'all') {
+      items = items.filter(it => it.kind === this._filter);
+    }
+
+    if (!items.length) {
+      out.innerHTML = `
+        <div style="background: rgba(255,255,255,0.03); border:1px dashed rgba(255,255,255,0.1); border-radius:14px; padding:48px 24px; text-align:center;">
+          <div style="font-size:2.5rem; margin-bottom:8px;">🗂️</div>
+          <p style="color: var(--text-muted); margin:0;">${this._query ? 'لا نتائج مطابقة لبحثك' : 'لا توجد حالات بعد'}</p>
+        </div>`;
+      return;
+    }
+
+    out.innerHTML = items.map(it => this._renderCard(it)).join('');
+  },
+
+  _renderCard(it) {
+    const kindBadge = it.kind === 'medical'
+      ? '<span style="background:rgba(192,38,211,0.18); color:#e879f9; padding:4px 10px; border-radius:999px; font-size:0.8rem;">🩺 طبية</span>'
+      : it.kind === 'bath'
+      ? '<span style="background:rgba(56,189,248,0.18); color:#7dd3fc; padding:4px 10px; border-radius:999px; font-size:0.8rem;">🛁 تحميم</span>'
+      : '<span style="background:rgba(245,158,11,0.18); color:#fcd34d; padding:4px 10px; border-radius:999px; font-size:0.8rem;">✂️ حلاقة</span>';
+
+    const statusMap = { waiting: 'قيد الانتظار', assigned: 'مُسندة', in_progress: 'قيد المعالجة', completed: 'مكتملة', cancelled: 'ملغاة' };
+    const statusLabel = statusMap[it.status] || it.status || '—';
+
+    const collabsLine = it.collaborators?.length
+      ? `<div style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">👥 أطباء مشاركون: ${it.collaborators.map(n => `د. ${escHtml(n)}`).join('، ')}</div>`
+      : '';
+
+    const detailsHref = it.kind === 'medical' && it.patient_id
+      ? `<a href="#patient/${escHtml(it.patient_id)}" style="color:#c084fc; text-decoration:none; font-size:0.9rem;">عرض ملف الحيوان ←</a>`
+      : '';
+
+    const serviceLine = it.kind !== 'medical' && it.service_name
+      ? `<div style="color:var(--text-muted); font-size:0.85rem;">الخدمة: ${escHtml(it.service_name)}${it.duration_actual ? ` • ${it.duration_actual} دقيقة` : ''}</div>`
+      : '';
+
+    const phoneLine = it.owner_phone
+      ? `<a href="tel:${escHtml(it.owner_phone)}" style="color:#a78bfa; text-decoration:none; font-size:0.85rem;">📞 ${escHtml(it.owner_phone)}</a>`
+      : '<span style="color:var(--text-muted); font-size:0.85rem;">—</span>';
+
+    return `
+      <div style="background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:16px 18px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+          <div style="flex:1; min-width:240px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+              ${kindBadge}
+              <span style="color:var(--text-muted); font-size:0.85rem;">${escHtml(formatDateTimeAr(it.created_at))}</span>
+              <span style="background:rgba(255,255,255,0.08); color:var(--white); padding:2px 8px; border-radius:6px; font-size:0.75rem;">${escHtml(statusLabel)}</span>
+            </div>
+            <div style="color:var(--white); font-size:1.05rem; font-weight:600;">
+              ${escHtml(it.owner_name)}${it.pet_name ? ` — 🐾 ${escHtml(it.pet_name)}` : ''}${it.pet_type ? ` (${escHtml(it.pet_type)})` : ''}
+            </div>
+            <div style="margin-top:4px;">${phoneLine}</div>
+            ${serviceLine}
+            <div style="color:#86efac; font-size:0.9rem; margin-top:6px;">
+              👨‍⚕️ تولّى الحالة: <strong>${escHtml(it.handler)}</strong>
+            </div>
+            ${collabsLine}
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+            ${detailsHref}
+          </div>
         </div>
       </div>
     `;
