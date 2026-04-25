@@ -16,18 +16,23 @@ const Auth = {
   _employee: null,
 
   async init() {
+    let waited = 0;
+    while (!supabaseClient && waited < 5000) {
+      await new Promise(r => setTimeout(r, 50));
+      waited += 50;
+    }
     if (!supabaseClient) {
       console.warn('Supabase client not ready at Auth.init — will rely on onAuthStateChange');
       return;
     }
-    supabaseClient.auth.getSession().then(async ({ data: { session } }) => {
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
       this._user = session?.user || null;
-      await this._loadProfiles();
-      this._updateUI();
-      if (Router.currentView && ['employees', 'operator', 'reports', 'doctor', 'admin', 'employee'].includes(Router.currentView)) {
-        Router.route();
-      }
-    }).catch(err => console.warn('getSession failed:', err));
+      if (this._user) await this._loadProfiles();
+    } catch (err) {
+      console.warn('getSession failed:', err);
+    }
+    this._updateUI();
 
     supabaseClient.auth.onAuthStateChange(async (_event, session) => {
       this._user = session?.user || null;
@@ -822,7 +827,68 @@ const DB = {
   },
 
   async updateVisit(id, fields) {
-    const { error } = await supabaseClient.from('visits').update(fields).eq('id', id);
+    const { data, error } = await supabaseClient
+      .from('visits')
+      .update(fields)
+      .eq('id', id)
+      .select('id');
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      throw new Error('لم يتم الحفظ — تحقق من صلاحيات حسابك (الطبيب يجب أن يكون مفعّلاً ومرتبطاً بحساب).');
+    }
+    return data[0];
+  },
+
+  async getVisitAttachments(visitId) {
+    const { data, error } = await supabaseClient
+      .from('visit_attachments')
+      .select('*, uploaded_by_doctor:doctors!visit_attachments_uploaded_by_fkey(display_name)')
+      .eq('visit_id', visitId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async uploadVisitAttachment(visitId, file, doctorId) {
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const uid = (crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2);
+    const path = `${visitId}/${Date.now()}-${uid}.${ext}`;
+    const { error: upErr } = await supabaseClient.storage
+      .from('visit-attachments')
+      .upload(path, file, { contentType: file.type || 'image/jpeg', upsert: false });
+    if (upErr) throw upErr;
+    const { data, error } = await supabaseClient
+      .from('visit_attachments')
+      .insert({
+        visit_id: visitId,
+        storage_path: path,
+        file_name: file.name,
+        mime_type: file.type,
+        size_bytes: file.size,
+        uploaded_by: doctorId || null,
+      })
+      .select()
+      .single();
+    if (error) {
+      await supabaseClient.storage.from('visit-attachments').remove([path]).catch(() => {});
+      throw error;
+    }
+    return data;
+  },
+
+  async getVisitAttachmentUrl(path) {
+    const { data, error } = await supabaseClient.storage
+      .from('visit-attachments')
+      .createSignedUrl(path, 3600);
+    if (error) throw error;
+    return data.signedUrl;
+  },
+
+  async deleteVisitAttachment(id, storagePath) {
+    if (storagePath) {
+      await supabaseClient.storage.from('visit-attachments').remove([storagePath]).catch(() => {});
+    }
+    const { error } = await supabaseClient.from('visit_attachments').delete().eq('id', id);
     if (error) throw error;
   },
 
@@ -4341,11 +4407,19 @@ const DoctorVisitDetailView = {
               ${canEdit ? `
                 <div class="exam-actions">
                   <button type="button" class="btn btn-ghost" id="ai-suggest-btn">💡 اقترح تشخيص بالذكاء الصناعي</button>
+                  <button type="button" class="btn btn-ghost" id="capture-lab-btn">📸 التقاط صورة للتحاليل</button>
+                  <input type="file" id="capture-lab-input" accept="image/*" capture="environment" multiple style="display:none">
                   <button type="submit" class="btn btn-primary">💾 حفظ</button>
                 </div>
               ` : '<p class="muted">عرض فقط (لست من الأطباء المسموح لهم بتعديل هذه الحالة).</p>'}
             </form>
             <div id="ai-result" class="ai-result" style="display:none;"></div>
+          </section>
+
+          <!-- Lab attachments -->
+          <section class="visit-card visit-attachments-card" style="grid-column: 1 / -1;">
+            <h2>📸 صور التحاليل</h2>
+            <div id="attachments-grid" class="attachments-grid"><div class="loading-spinner"></div></div>
           </section>
 
           <!-- Appointments -->
@@ -4564,6 +4638,75 @@ const DoctorVisitDetailView = {
         aiBtn.textContent = '💡 اقترح تشخيص بالذكاء الصناعي';
       });
     }
+
+    // Lab attachments — capture & list
+    const renderAttachments = async () => {
+      const grid = document.getElementById('attachments-grid');
+      if (!grid) return;
+      try {
+        const items = await DB.getVisitAttachments(visit.id);
+        if (!items.length) {
+          grid.innerHTML = '<p class="muted">لا توجد صور مرفوعة بعد.</p>';
+          return;
+        }
+        const cards = await Promise.all(items.map(async (it) => {
+          let url = '';
+          try { url = await DB.getVisitAttachmentUrl(it.storage_path); } catch (_) {}
+          const docName = it.uploaded_by_doctor?.display_name ? ` — د. ${escHtml(it.uploaded_by_doctor.display_name)}` : '';
+          return `
+            <figure class="attachment-card">
+              ${url ? `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${escHtml(it.file_name || 'تحليل')}" loading="lazy"></a>` : '<div class="attachment-error">⚠️ تعذر تحميل الصورة</div>'}
+              <figcaption>
+                <small>${formatDateTimeAr(it.created_at)}${docName}</small>
+                ${canEdit ? `<button class="attachment-del-btn" data-del="${it.id}" data-path="${escHtml(it.storage_path)}" title="حذف">🗑️</button>` : ''}
+              </figcaption>
+            </figure>`;
+        }));
+        grid.innerHTML = cards.join('');
+        grid.querySelectorAll('[data-del]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm('هل تريد حذف هذه الصورة؟')) return;
+            try {
+              await DB.deleteVisitAttachment(btn.dataset.del, btn.dataset.path);
+              showToast('🗑️ تم الحذف', 'success');
+              renderAttachments();
+            } catch (err) {
+              showToast(err.message || 'فشل الحذف', 'error');
+            }
+          });
+        });
+      } catch (err) {
+        grid.innerHTML = `<p class="ai-error">❌ ${escHtml(err.message || 'فشل تحميل الصور')}</p>`;
+      }
+    };
+
+    const captureBtn = document.getElementById('capture-lab-btn');
+    const captureInput = document.getElementById('capture-lab-input');
+    if (captureBtn && captureInput) {
+      captureBtn.addEventListener('click', () => captureInput.click());
+      captureInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        captureBtn.disabled = true;
+        const originalText = captureBtn.textContent;
+        captureBtn.textContent = '⏳ جارٍ الرفع...';
+        try {
+          for (const f of files) {
+            await DB.uploadVisitAttachment(visit.id, f, doctor?.id);
+          }
+          showToast(`✅ تم رفع ${files.length} صورة`, 'success');
+          await renderAttachments();
+        } catch (err) {
+          showToast(err.message || 'فشل الرفع', 'error');
+        } finally {
+          captureBtn.disabled = false;
+          captureBtn.textContent = originalText;
+          captureInput.value = '';
+        }
+      });
+    }
+
+    renderAttachments();
 
     // add appointment
     const apptForm = document.getElementById('add-appt-form');
