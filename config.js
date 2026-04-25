@@ -24,7 +24,15 @@ async function initSupabaseClient() {
   }
 
   try {
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: window.localStorage,
+        storageKey: 'alkokh-auth',
+      },
+    });
     console.log('✅ Supabase client initialized');
     return true;
   } catch (err) {
