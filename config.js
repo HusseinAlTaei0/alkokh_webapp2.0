@@ -1,11 +1,16 @@
 /* =============================================
-   SUPABASE CONFIGURATION
+   BAYTAR — SUPABASE CONFIGURATION
    ⚠️ الـ publishable key آمنة للاستخدام بالمتصفح
    الحماية الحقيقية تأتي من RLS policies بقاعدة البيانات
+
+   📌 املأ القيمتين أدناه بمشروع Supabase الجديد عند توفّره.
    ============================================= */
 
-const SUPABASE_URL = 'https://hvvogxljniihayalgdvm.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_h93ykLl9F3IXO4K-3TXe1w_wmllFy4_';
+const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+const SUPABASE_KEY = 'YOUR_SUPABASE_PUBLISHABLE_KEY';
+
+// اسم العيادة (placeholder مؤقت — يأتي لاحقاً من جدول clinics لكل عيادة)
+const CLINIC_NAME = 'بيطار';
 
 // Initialize Supabase Client with safety check for CDN loading
 let supabaseClient;
@@ -30,7 +35,7 @@ async function initSupabaseClient() {
         autoRefreshToken: true,
         detectSessionInUrl: true,
         storage: window.localStorage,
-        storageKey: 'alkokh-auth',
+        storageKey: 'baytar-auth',
       },
     });
     console.log('✅ Supabase client initialized');

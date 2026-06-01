@@ -17,5 +17,3 @@ Thumbs.db
 # Claude Code local settings (contains env vars)
 .claude/settings.local.json
 .claude/
-alkokh_webapp/
-alkokh_webapp2/

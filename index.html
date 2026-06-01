@@ -4,11 +4,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="description" content="نظام إدارة الحلاقة والتحميم — عيادة الكوخ البيطرية">
+  <meta name="description" content="بيطار — نظام إدارة العيادات البيطرية">
   <meta name="theme-color" content="#C026D3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>الكوخ البيطرية — الحلاقة والتحميم</title>
+  <title>بيطار — إدارة العيادات البيطرية</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,7 +29,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" defer></script>
   <!-- QRCode is small (~8KB), load deferred -->
   <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@04f46c6/qrcode.min.js" defer></script>
-  <!-- Chart.js loaded on-demand by DashboardView (not here) -->
 </head>
 
 <body>
@@ -40,8 +39,8 @@
   <nav id="main-nav" class="nav">
     <div class="nav-inner">
       <div class="nav-brand">
-        <img src="assets/logo.svg" alt="الكوخ" class="nav-logo">
-        <span class="nav-title">الكوخ</span>
+        <img src="assets/logo.svg" alt="بيطار" class="nav-logo">
+        <span class="nav-title">بيطار</span>
       </div>
       <div class="nav-actions">
         <button id="logout-btn" class="logout-btn" style="display:none;" title="تسجيل الخروج">
@@ -68,44 +67,31 @@
         <span class="menu-number">02</span>
         <span class="menu-text">تسجيل الدخول</span>
       </a>
-      <!-- صفحة المهام: للموظفين فقط -->
-      <a href="#employee" class="menu-link" data-role="employee" data-view="employee" style="display:none;">
-        <span class="menu-number">03</span>
-        <span class="menu-text">صفحة المهام</span>
-      </a>
       <!-- صفحات الطبيب -->
       <a href="#doctor" class="menu-link" data-role="doctor" data-view="doctor" style="display:none;">
-        <span class="menu-number">04</span>
+        <span class="menu-number">03</span>
         <span class="menu-text">لوحة الطبيب</span>
       </a>
       <a href="#doctor/chat" class="menu-link" data-role="doctor" data-view="doctor" style="display:none;">
-        <span class="menu-number">05</span>
+        <span class="menu-number">04</span>
         <span class="menu-text">چات الفريق</span>
       </a>
       <a href="#reports/medical" class="menu-link" data-role="doctor" data-view="reports" style="display:none;">
-        <span class="menu-number">06</span>
+        <span class="menu-number">05</span>
         <span class="menu-text">تقاريري الطبية</span>
       </a>
       <!-- صفحات المنظم (operator + admin) — تاريخ الحالات وحدة تظهر للاثنين -->
-      <a href="#operator" class="menu-link" data-role="operator" data-view="operator" style="display:none;">
-        <span class="menu-number">07</span>
-        <span class="menu-text">صفحة المنظم</span>
-      </a>
       <a href="#case-history" class="menu-link" data-role="operator" data-view="case-history" style="display:none;">
-        <span class="menu-number">08</span>
+        <span class="menu-number">06</span>
         <span class="menu-text">تاريخ الحالات</span>
       </a>
       <!-- صفحات المدير فقط -->
-      <a href="#employees" class="menu-link" data-role="clinic-admin" data-view="employees" style="display:none;">
-        <span class="menu-number">09</span>
-        <span class="menu-text">إدارة الموظفين</span>
-      </a>
       <a href="#reports/clinic" class="menu-link" data-role="clinic-admin" data-view="reports" style="display:none;">
-        <span class="menu-number">10</span>
+        <span class="menu-number">07</span>
         <span class="menu-text">تقارير العيادة</span>
       </a>
       <a href="#admin/doctors" class="menu-link" data-role="clinic-admin" data-view="admin" style="display:none;">
-        <span class="menu-number">11</span>
+        <span class="menu-number">08</span>
         <span class="menu-text">إدارة الأطباء</span>
       </a>
     </div>

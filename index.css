@@ -1,11 +1,11 @@
 /* =============================================
-   ALKOKH VET CLINIC â DESIGN SYSTEM
+   BAYTARâ DESIGN SYSTEM
    Colors inspired by the clinic's vivid purple brand
    ============================================= */
 
 /* === DESIGN TOKENS === */
 :root {
-  /* Brand Colors â Alkokh Magenta-Purple Identity */
+  /* Brand Colors â BAYTAR Magenta-Purple Identity */
   --purple-50: #fdf4ff;
   --purple-100: #fae8ff;
   --purple-200: #f5d0fe;
@@ -2185,10 +2185,6 @@ body {
 
 .landing-card-medical:hover {
   border-color: #3b82f6;
-}
-
-.landing-card-grooming:hover {
-  border-color: var(--purple-500);
 }
 
 .landing-icon {
