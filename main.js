@@ -80,7 +80,7 @@ const Auth = {
       this._doctor = null;
       return;
     }
-    console.log('🔍 Loading profiles for user:', this._user.id, this._user.email);
+    console.log('🔍 Loading doctor profile...');
 
     // Add timeout protection (10 seconds max)
     const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('Profile lookup timed out')), ms));
@@ -98,7 +98,7 @@ const Auth = {
         this._doctor = null;
       }
 
-      console.log('👨‍⚕️ Doctor profile:', this._doctor ? this._doctor.display_name : 'not found');
+      console.log('👨‍⚕️ Doctor profile:', this._doctor ? 'loaded' : 'not found');
     } catch (err) {
       console.error('⏰ Profile loading error:', err.message);
       this._doctor = null;
@@ -367,7 +367,18 @@ const DB = {
     // {clinic_id}/{visit_id}/{filename}
     const clinicId = Auth.getDoctor()?.clinic_id;
     if (!clinicId) throw new Error('تعذّر تحديد العيادة الحالية — أعد تسجيل الدخول.');
-    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+
+    // --- File Validation ---
+    const rawExt = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const ext    = rawExt.replace(/[^a-z0-9]/g, '') || 'jpg';
+    const ALLOWED_TYPES = ['jpg','jpeg','png','gif','pdf','webp'];
+    const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+    if (!ALLOWED_TYPES.includes(ext))
+      throw new Error(`نوع الملف غير مسموح. المسموح: ${ALLOWED_TYPES.join(', ')}`);
+    if (file.size > MAX_SIZE_BYTES)
+      throw new Error('حجم الملف يتجاوز 10MB');
+    // --- End Validation ---
+
     const uid = (crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2);
     const path = `${clinicId}/${visitId}/${Date.now()}-${uid}.${ext}`;
     const { error: upErr } = await supabaseClient.storage
@@ -918,13 +929,33 @@ function elapsedTimer(dateStr) {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-function showToast(message, type = 'info') {
-  const container = $('#toast-container');
+function showToast(message, type = 'info', _duration) {
+  // _duration parameter kept for backward compatibility (ignored)
+  const container = document.querySelector('#toast-container')
+    || document.querySelector('.toast-container');
+  if (!container) return;
+
+  const ICONS = {
+    success: '✅', warning: '⚠️', error: '❌', info: '💜'
+  };
+
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span>${type === 'success' ? '✅' : type === 'warning' ? '⚠️' : type === 'error' ? '❌' : '💜'}</span> ${message}`;
+
+  const icon = document.createElement('span');
+  icon.textContent = ICONS[type] ?? '💜';
+
+  // textContent بدل innerHTML — يمنع XSS تماماً
+  const text = document.createTextNode(' ' + message);
+
+  toast.appendChild(icon);
+  toast.appendChild(text);
   container.appendChild(toast);
-  setTimeout(() => toast.remove(), 3000);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
 function playNotificationSound() {

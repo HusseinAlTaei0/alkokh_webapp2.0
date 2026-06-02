@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('APP_URL') ?? '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
@@ -39,8 +39,16 @@ serve(async (req) => {
       specialization, phone, is_admin, avatar_color, bio
     } = await req.json()
 
-    if (!email || !password || !display_name)
-      return json({ error: 'Missing: email, password, display_name' }, 400)
+    // Input validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!email || !emailRegex.test(email))
+      return json({ error: 'صيغة الإيميل غير صحيحة' }, 400)
+    if (!password || password.length < 8)
+      return json({ error: 'كلمة السر يجب أن تكون 8 أحرف على الأقل' }, 400)
+    if (!display_name || display_name.trim().length === 0)
+      return json({ error: 'الاسم المعروض مطلوب' }, 400)
+    if (display_name.length > 100)
+      return json({ error: 'الاسم المعروض طويل جداً (100 حرف كحد أقصى)' }, 400)
 
     // 4. إنشاء حساب Auth
     const { data: newAuth, error: createErr } =

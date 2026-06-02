@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('APP_URL') ?? '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-setup-secret',
 }
 
@@ -10,10 +10,15 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    // حماية: مفتاح سري للإعداد فقط
+    // حماية: مفتاح سري للإعداد فقط (timing-safe comparison)
     const secret = req.headers.get('x-setup-secret')
-    if (secret !== Deno.env.get('SETUP_SECRET'))
-      return json({ error: 'Unauthorized' }, 401)
+    const encoder    = new TextEncoder()
+    const secretA    = encoder.encode(secret ?? '')
+    const secretB    = encoder.encode(Deno.env.get('SETUP_SECRET') ?? '')
+    let diff = secretA.length === secretB.length ? 0 : 1
+    const len = Math.min(secretA.length, secretB.length)
+    for (let i = 0; i < len; i++) diff |= secretA[i] ^ secretB[i]
+    if (diff !== 0) return json({ error: 'Unauthorized' }, 401)
 
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -25,11 +30,19 @@ serve(async (req) => {
       admin_email, admin_password, admin_display_name, admin_full_name
     } = await req.json()
 
+    // Slug: lowercase + أحرف وأرقام وشرطة فقط
+    const safeSlug = (clinic_slug ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '')
+    if (!safeSlug) return json({ error: 'slug غير صالح' }, 400)
+
+    // Password minimum length
+    if (!admin_password || admin_password.length < 8)
+      return json({ error: 'كلمة السر يجب 8 أحرف على الأقل' }, 400)
+
     // 1. إنشاء العيادة (service_role يتجاوز RLS)
     const { data: clinic, error: clinicErr } = await supabaseAdmin
       .from('clinics')
       .insert({
-        name: clinic_name, slug: clinic_slug,
+        name: clinic_name, slug: safeSlug,
         phone: clinic_phone, address: clinic_address,
         is_active: true
       })
