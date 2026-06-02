@@ -1716,11 +1716,14 @@ const MedicalIntakeView = {
         // 4. إشعار WhatsApp — استلام الطلب (اختياري، لا يوقف العملية)
         (async () => {
           try {
-            await supabaseClient.functions.invoke('send-whatsapp', {
+            console.log('📱 Calling send-whatsapp...', { visit_id: visit.id });
+            const { data, error } = await supabaseClient.functions.invoke('send-whatsapp', {
               body: { message_type: 'intake_received', visit_id: visit.id }
             });
+            if (error) console.error('❌ send-whatsapp error:', error);
+            else console.log('✅ send-whatsapp success:', data);
           } catch (e) {
-            console.error('WhatsApp intake_received failed:', e?.message);
+            console.error('❌ send-whatsapp exception:', e?.message);
           }
         })();
 
@@ -2013,11 +2016,14 @@ const DoctorView = {
           // notify customer — إشعار WhatsApp قبول الطبيب (اختياري، لا يوقف العملية)
           (async () => {
             try {
-              await supabaseClient.functions.invoke('send-whatsapp', {
+              console.log('📱 Calling send-whatsapp...', { visit_id: visitId });
+              const { data, error } = await supabaseClient.functions.invoke('send-whatsapp', {
                 body: { message_type: 'doctor_accepted', visit_id: visitId }
               });
+              if (error) console.error('❌ send-whatsapp error:', error);
+              else console.log('✅ send-whatsapp success:', data);
             } catch (e) {
-              console.error('WhatsApp doctor_accepted failed:', e?.message);
+              console.error('❌ send-whatsapp exception:', e?.message);
             }
           })();
           showToast('✅ تم قبول الحالة', 'success');
