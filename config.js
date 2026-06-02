@@ -6,8 +6,8 @@
    📌 املأ القيمتين أدناه بمشروع Supabase الجديد عند توفّره.
    ============================================= */
 
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-const SUPABASE_KEY = 'YOUR_SUPABASE_PUBLISHABLE_KEY';
+const SUPABASE_URL = 'https://abafkrmjszcgbzmldaji.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_MokGn1kHl7NJrfXErMvQZw_L9IUIle8';
 
 // اسم العيادة (placeholder مؤقت — يأتي لاحقاً من جدول clinics لكل عيادة)
 const CLINIC_NAME = 'بيطار';
