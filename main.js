@@ -1713,7 +1713,16 @@ const MedicalIntakeView = {
           },
           symptoms,
         });
-        // 4. TODO(Twilio): إرسال رسالة تأكيد استلام الطلب للعميل عبر Twilio (eventType: intake_received)
+        // 4. إشعار WhatsApp — استلام الطلب (اختياري، لا يوقف العملية)
+        (async () => {
+          try {
+            await supabaseClient.functions.invoke('send-whatsapp', {
+              body: { message_type: 'intake_received', visit_id: visit.id }
+            });
+          } catch (e) {
+            console.error('WhatsApp intake_received failed:', e?.message);
+          }
+        })();
 
         // success screen with QR code (fallback to visit id if patient missing)
         const patientId = patient?.id ?? '';
@@ -2001,8 +2010,16 @@ const DoctorView = {
             await this._loadCases();
             return;
           }
-          // notify customer
-          // TODO(Twilio): إشعار العميل أن الطبيب استلم الحالة عبر Twilio (eventType: doctor_patient_accepted)
+          // notify customer — إشعار WhatsApp قبول الطبيب (اختياري، لا يوقف العملية)
+          (async () => {
+            try {
+              await supabaseClient.functions.invoke('send-whatsapp', {
+                body: { message_type: 'doctor_accepted', visit_id: visitId }
+              });
+            } catch (e) {
+              console.error('WhatsApp doctor_accepted failed:', e?.message);
+            }
+          })();
           showToast('✅ تم قبول الحالة', 'success');
           window.location.hash = `#doctor/visit/${visitId}`;
         } catch (err) {
