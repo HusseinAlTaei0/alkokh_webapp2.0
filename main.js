@@ -363,9 +363,13 @@ const DB = {
   },
 
   async uploadVisitAttachment(visitId, file, doctorId) {
+    // المسار لازم يبدأ بـ clinic_id حتى تمر سياسات الـ Storage RLS:
+    // {clinic_id}/{visit_id}/{filename}
+    const clinicId = Auth.getDoctor()?.clinic_id;
+    if (!clinicId) throw new Error('تعذّر تحديد العيادة الحالية — أعد تسجيل الدخول.');
     const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
     const uid = (crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2);
-    const path = `${visitId}/${Date.now()}-${uid}.${ext}`;
+    const path = `${clinicId}/${visitId}/${Date.now()}-${uid}.${ext}`;
     const { error: upErr } = await supabaseClient.storage
       .from('visit-attachments')
       .upload(path, file, { contentType: file.type || 'image/jpeg', upsert: false });

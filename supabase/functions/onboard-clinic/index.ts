@@ -71,7 +71,8 @@ serve(async (req) => {
     return json({ success: true, clinic, doctor })
 
   } catch (e) {
-    return json({ error: e.message }, 500)
+    const msg = e instanceof Error ? e.message : 'Unknown error'
+    return json({ error: msg }, 500)
   }
 })
 
