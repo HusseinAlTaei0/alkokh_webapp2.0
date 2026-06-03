@@ -21,12 +21,17 @@ function corsFor(req: Request) {
   }
 }
 
-// Template SIDs من Twilio (تُضاف بعد موافقة Meta)
-const TEMPLATES: Record<string, string> = {
-  intake_received:      Deno.env.get('TWILIO_TEMPLATE_INTAKE')   ?? '',
-  doctor_accepted:      Deno.env.get('TWILIO_TEMPLATE_ACCEPTED') ?? '',
-  appointment_reminder: Deno.env.get('TWILIO_TEMPLATE_REMINDER') ?? '',
+// خريطة نوع الرسالة → اسم سر الـ Template SID (يُضاف بعد موافقة Meta)
+const TEMPLATE_ENV: Record<string, string> = {
+  booking_received:  'TWILIO_TEMPLATE_BOOKING_RECEIVED',
+  booking_confirmed: 'TWILIO_TEMPLATE_BOOKING_CONFIRMED',
+  service_started:   'TWILIO_TEMPLATE_SERVICE_STARTED',
+  service_completed: 'TWILIO_TEMPLATE_SERVICE_COMPLETED',
+  feedback_request:  'TWILIO_TEMPLATE_FEEDBACK_REQUEST',
 }
+
+// الرسائل اللي تحتاج تاريخ/ساعة من الموعد المرتبط
+const NEEDS_APPOINTMENT = new Set(['booking_received', 'booking_confirmed'])
 
 serve(async (req) => {
   const cors = corsFor(req)
@@ -43,7 +48,7 @@ serve(async (req) => {
     if (!authHeader) return json({ error: 'Unauthorized' }, 401)
 
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')            ?? '',
+      Deno.env.get('SUPABASE_URL')              ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
@@ -57,11 +62,15 @@ serve(async (req) => {
     if (!message_type || !visit_id)
       return json({ error: 'message_type و visit_id مطلوبان' }, 400)
 
+    if (!(message_type in TEMPLATE_ENV))
+      return json({ error: `نوع رسالة غير مدعوم: ${message_type}` }, 400)
+
     // جلب بيانات الزيارة
     const { data: visit, error: visitErr } = await supabase
       .from('visits')
       .select(`
         id, clinic_id, intake_phone, intake_customer_name, intake_animal_type,
+        source_appointment_id,
         clinics!inner ( name ),
         doctors:primary_doctor_id ( display_name ),
         patients:patient_id ( name )
@@ -71,28 +80,61 @@ serve(async (req) => {
 
     if (visitErr || !visit) return json({ error: 'الزيارة غير موجودة' }, 404)
 
+    // booking_confirmed يُرسَل للحجوزات الجديدة فقط (مو زيارات المتابعة)
+    if (message_type === 'booking_confirmed' && visit.source_appointment_id) {
+      return json({ skipped: true, reason: 'follow-up visit — no booking_confirmed' })
+    }
+
     const phone = visit.intake_phone
     if (!phone) return json({ error: 'لا يوجد رقم هاتف للمريض' }, 400)
 
-    // بناء متغيرات الـ Template
-    let variables: Record<string, string>
+    // القيم المشتركة
+    const owner  = visit.intake_customer_name ?? 'عزيزي العميل'
+    const clinic = (visit.clinics as any).name
+    const pet    = (visit.patients as any)?.name ?? visit.intake_animal_type ?? 'حيوانك'
+    const doctor = (visit.doctors as any)?.display_name ?? 'الطبيب'
 
-    if (message_type === 'intake_received') {
-      variables = {
-        '1': visit.intake_customer_name ?? 'عزيزي العميل',
-        '2': (visit.clinics as any).name,
-        '3': (visit.patients as any)?.name ?? visit.intake_animal_type ?? 'حيوانك',
-      }
-    } else if (message_type === 'doctor_accepted') {
-      variables = {
-        '1': visit.intake_customer_name ?? 'عزيزي العميل',
-        '2': (visit.doctors as any)?.display_name ?? 'الطبيب',
-        '3': (visit.patients as any)?.name ?? visit.intake_animal_type ?? 'حيوانك',
-        '4': (visit.clinics as any).name,
-      }
-    } else {
-      return json({ error: 'نوع رسالة غير مدعوم' }, 400)
+    // تاريخ/ساعة من الموعد المرتبط (للحجز فقط)
+    let dateStr = '', timeStr = ''
+    if (NEEDS_APPOINTMENT.has(message_type)) {
+      const { data: appt } = await supabase
+        .from('visit_appointments')
+        .select('scheduled_at')
+        .eq('visit_id', visit.id)
+        .order('scheduled_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+      if (!appt?.scheduled_at)
+        return json({ error: 'لا يوجد موعد مرتبط بالحجز (مطلوب للتاريخ/الساعة)' }, 400)
+
+      dateStr = fmtDate(appt.scheduled_at)
+      timeStr = fmtTime(appt.scheduled_at)
     }
+
+    // بناء متغيرات الـ Template حسب الترتيب المعتمد على Twilio
+    let variables: Record<string, string>
+    switch (message_type) {
+      case 'booking_received':   // {1}صاحب {2}عيادة {3}حيوان {4}تاريخ {5}ساعة
+        variables = { '1': owner, '2': clinic, '3': pet, '4': dateStr, '5': timeStr }
+        break
+      case 'booking_confirmed':  // {1}صاحب {2}عيادة {3}طبيب {4}حيوان {5}تاريخ {6}ساعة
+        variables = { '1': owner, '2': clinic, '3': doctor, '4': pet, '5': dateStr, '6': timeStr }
+        break
+      case 'service_started':    // {1}صاحب {2}طبيب {3}حيوان {4}عيادة
+        variables = { '1': owner, '2': doctor, '3': pet, '4': clinic }
+        break
+      case 'service_completed':  // {1}صاحب {2}حيوان {3}عيادة
+        variables = { '1': owner, '2': pet, '3': clinic }
+        break
+      case 'feedback_request':   // {1}صاحب {2}حيوان
+        variables = { '1': owner, '2': pet }
+        break
+      default:
+        return json({ error: 'نوع رسالة غير مدعوم' }, 400)
+    }
+
+    const templateSid = Deno.env.get(TEMPLATE_ENV[message_type]) ?? ''
 
     // تسجيل مسبق في messages_log
     const { data: logEntry } = await supabase
@@ -109,7 +151,7 @@ serve(async (req) => {
 
     // إرسال عبر Twilio
     try {
-      const twilioSid = await sendViatwilio(phone, TEMPLATES[message_type], variables)
+      const twilioSid = await sendViaTwilio(phone, templateSid, variables)
 
       if (logEntry) {
         await supabase.from('messages_log').update({
@@ -140,16 +182,32 @@ serve(async (req) => {
 })
 
 // ----------------------------------------------------------------
+// تنسيق التاريخ/الساعة بتوقيت بغداد
+// ----------------------------------------------------------------
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('ar-IQ', {
+    weekday: 'long', day: 'numeric', month: 'long',
+    timeZone: 'Asia/Baghdad',
+  })
+}
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('ar-IQ', {
+    hour: '2-digit', minute: '2-digit', hour12: true,
+    timeZone: 'Asia/Baghdad',
+  })
+}
+
+// ----------------------------------------------------------------
 // دالة الإرسال عبر Twilio API
 // ----------------------------------------------------------------
-async function sendViatwilio(
+async function sendViaTwilio(
   to: string,
   templateSid: string,
   variables: Record<string, string>
 ): Promise<string> {
-  const accountSid  = Deno.env.get('TWILIO_ACCOUNT_SID')      ?? ''
-  const authToken   = Deno.env.get('TWILIO_AUTH_TOKEN')        ?? ''
-  const fromNumber  = Deno.env.get('TWILIO_WHATSAPP_NUMBER')   ?? ''
+  const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')    ?? ''
+  const authToken  = Deno.env.get('TWILIO_AUTH_TOKEN')      ?? ''
+  const fromNumber = Deno.env.get('TWILIO_WHATSAPP_NUMBER') ?? ''
 
   if (!accountSid || !authToken || !fromNumber)
     throw new Error('Twilio credentials غير مضبوطة في Secrets')
@@ -163,13 +221,12 @@ async function sendViatwilio(
     To:   formattedTo,
   }
 
-  // لو Template SID موجود → استخدم Content API (production)
-  // لو فارغ → Sandbox mode (testing)
+  // Template SID موجود → Content API (production)
+  // فارغ → Sandbox mode (نص عادي للاختبار قبل موافقة Meta)
   if (templateSid) {
     params.ContentSid       = templateSid
     params.ContentVariables = JSON.stringify(variables)
   } else {
-    // Sandbox: أرسل الـ variables كنص عادي للاختبار
     params.Body = Object.entries(variables)
       .map(([k, v]) => `[${k}]: ${v}`)
       .join('\n')

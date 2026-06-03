@@ -2603,6 +2603,11 @@ body {
   color: var(--waiting);
 }
 
+.status-accepted {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
 .status-in_progress {
   background: var(--in-progress-bg);
   color: var(--in-progress);
@@ -3939,6 +3944,12 @@ dialog.dlg::backdrop {
   background: rgba(245, 158, 11, 0.2) !important;
   border-color: rgba(245, 158, 11, 0.3) !important;
   color: #fcd34d !important;
+}
+
+.case-card .status-pill.status-accepted {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-color: rgba(59, 130, 246, 0.3) !important;
+  color: #93c5fd !important;
 }
 
 .case-card .status-pill.status-in_progress {

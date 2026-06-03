@@ -277,6 +277,30 @@ const DB = {
     return data;
   },
 
+  // إنشاء زيارة متابعة من موعد مجدول — تبدأ بحالة accepted وتعلّم الموعد المصدر "حضر"
+  async createFollowupVisit({ patient_id, customer_id, source_appointment_id, doctor_id, intake }) {
+    const { data, error } = await supabaseClient.from('visits').insert({
+      customer_id,
+      patient_id,
+      primary_doctor_id: doctor_id,
+      status: 'accepted',
+      accepted_at: new Date().toISOString(),
+      source_appointment_id,
+      intake_customer_name: intake.customer_name,
+      intake_phone: intake.phone,
+      intake_animal_type: intake.animal_type,
+      intake_area: intake.area || null,
+      intake_animal_age: intake.animal_age || null,
+      intake_notes: intake.notes || null,
+    }).select().single();
+    if (error) throw error;
+    // علّم الموعد المصدر كـ "حضر"
+    await supabaseClient.from('visit_appointments')
+      .update({ status: 'attended', attended_at: new Date().toISOString() })
+      .eq('id', source_appointment_id);
+    return data;
+  },
+
   async getWaitingVisits() {
     const { data, error } = await supabaseClient
       .from('visits')
@@ -329,7 +353,7 @@ const DB = {
       .from('visits')
       .update({
         primary_doctor_id: doctorId,
-        status: 'in_progress',
+        status: 'accepted',
         accepted_at: new Date().toISOString(),
       })
       .eq('id', visitId)
@@ -337,6 +361,15 @@ const DB = {
       .select().maybeSingle();
     if (error) throw error;
     return data;
+  },
+
+  // بدء العمل (accepted → in_progress)
+  async startVisit(id) {
+    const { error } = await supabaseClient.from('visits').update({
+      status: 'in_progress',
+      service_started_at: new Date().toISOString(),
+    }).eq('id', id).eq('status', 'accepted');
+    if (error) throw error;
   },
 
   async updateVisit(id, fields) {
@@ -478,10 +511,10 @@ const DB = {
   },
 
   // --- Appointments (follow-up schedule) ---
-  async addAppointment({ visit_id, patient_id, scheduled_at, purpose, created_by }) {
+  async addAppointment({ visit_id, patient_id, scheduled_at, purpose, created_by, time_specified = true }) {
     const { data, error } = await supabaseClient
       .from('visit_appointments')
-      .insert({ visit_id, patient_id, scheduled_at, purpose, created_by })
+      .insert({ visit_id, patient_id, scheduled_at, purpose, created_by, time_specified })
       .select().single();
     if (error) throw error;
     return data;
@@ -1484,7 +1517,22 @@ function severityBadge(sev) {
   return `<span class="sev-badge ${m.cls}">${m.txt}</span>`;
 }
 function statusLabel(status) {
-  return ({ waiting: 'بانتظار القبول', in_progress: 'قيد المعالجة', completed: 'مكتملة', cancelled: 'ملغاة' }[status] || status);
+  return ({ waiting: 'بانتظار القبول', accepted: 'تم القبول', in_progress: 'قيد المعالجة', completed: 'مكتملة', cancelled: 'ملغاة' }[status] || status);
+}
+
+// إشعار WhatsApp عبر Edge Function — fire-and-forget (لا يوقف العملية لو فشل)
+function notifyWhatsApp(messageType, visitId) {
+  (async () => {
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('send-whatsapp', {
+        body: { message_type: messageType, visit_id: visitId }
+      });
+      if (error) console.error(`❌ send-whatsapp(${messageType}):`, error);
+      else console.log(`✅ send-whatsapp(${messageType}):`, data);
+    } catch (e) {
+      console.error(`❌ send-whatsapp(${messageType}) exception:`, e?.message);
+    }
+  })();
 }
 function playNotifSound() {
   try { const a = document.getElementById('notification-sound'); if (a) { a.currentTime = 0; a.play().catch(() => { }); } } catch { }
@@ -1601,6 +1649,20 @@ const MedicalIntakeView = {
             </label>
           </div>
 
+          <div class="form-section">
+            <label class="form-label">موعد الزيارة <em>*</em></label>
+            <div class="form-grid">
+              <label class="form-field">
+                <span>اليوم</span>
+                <input type="date" name="booking_date" required min="${new Date().toISOString().slice(0, 10)}">
+              </label>
+              <label class="form-field">
+                <span>الساعة</span>
+                <input type="time" name="booking_time" required>
+              </label>
+            </div>
+          </div>
+
           <button type="submit" class="btn btn-primary btn-lg intake-submit">
             <span>📨</span>
             <span>إرسال الطلب</span>
@@ -1713,19 +1775,23 @@ const MedicalIntakeView = {
           },
           symptoms,
         });
-        // 4. إشعار WhatsApp — استلام الطلب (اختياري، لا يوقف العملية)
-        (async () => {
+        // 3ب. إنشاء موعد الحجز (الوقت اللي اختاره الزبون)
+        const bookingDate = fd.get('booking_date');
+        const bookingTime = fd.get('booking_time');
+        if (bookingDate && bookingTime) {
           try {
-            console.log('📱 Calling send-whatsapp...', { visit_id: visit.id });
-            const { data, error } = await supabaseClient.functions.invoke('send-whatsapp', {
-              body: { message_type: 'intake_received', visit_id: visit.id }
+            await DB.addAppointment({
+              visit_id: visit.id,
+              patient_id: patient?.id ?? null,
+              scheduled_at: new Date(`${bookingDate}T${bookingTime}`).toISOString(),
+              purpose: 'الحجز الأولي',
+              created_by: Auth.getDoctor()?.id ?? null,
+              time_specified: true,
             });
-            if (error) console.error('❌ send-whatsapp error:', error);
-            else console.log('✅ send-whatsapp success:', data);
-          } catch (e) {
-            console.error('❌ send-whatsapp exception:', e?.message);
-          }
-        })();
+          } catch (apptErr) { console.warn('booking appointment failed:', apptErr); }
+        }
+        // 4. إشعار WhatsApp — استلام الحجز (اختياري، لا يوقف العملية)
+        notifyWhatsApp('booking_received', visit.id);
 
         // success screen with QR code (fallback to visit id if patient missing)
         const patientId = patient?.id ?? '';
@@ -2013,19 +2079,8 @@ const DoctorView = {
             await this._loadCases();
             return;
           }
-          // notify customer — إشعار WhatsApp قبول الطبيب (اختياري، لا يوقف العملية)
-          (async () => {
-            try {
-              console.log('📱 Calling send-whatsapp...', { visit_id: visitId });
-              const { data, error } = await supabaseClient.functions.invoke('send-whatsapp', {
-                body: { message_type: 'doctor_accepted', visit_id: visitId }
-              });
-              if (error) console.error('❌ send-whatsapp error:', error);
-              else console.log('✅ send-whatsapp success:', data);
-            } catch (e) {
-              console.error('❌ send-whatsapp exception:', e?.message);
-            }
-          })();
+          // notify customer — تأكيد الحجز (حجز جديد فقط؛ محميّة بالباك-إند)
+          notifyWhatsApp('booking_confirmed', visitId);
           showToast('✅ تم قبول الحالة', 'success');
           window.location.hash = `#doctor/visit/${visitId}`;
         } catch (err) {
@@ -2084,8 +2139,9 @@ const DoctorVisitDetailView = {
             </div>
           </div>
           <div class="visit-header-actions">
-            ${visit.status === 'in_progress' && canEdit ? `<button class="btn btn-success" id="complete-visit-btn">✅ إنهاء الحالة</button>` : ''}
             ${visit.status === 'waiting' ? `<button class="btn btn-primary" id="accept-visit-btn">قبول الحالة</button>` : ''}
+            ${visit.status === 'accepted' && canEdit ? `<button class="btn btn-primary" id="start-visit-btn">▶️ بدأ العمل</button>` : ''}
+            ${visit.status === 'in_progress' && canEdit ? `<button class="btn btn-success" id="complete-visit-btn">✅ تم الانتهاء</button>` : ''}
           </div>
         </div>
 
@@ -2203,9 +2259,14 @@ const DoctorVisitDetailView = {
                   
                   <div class="doctor-form-field" style="flex: 1; min-width: 100px; margin-bottom: 0;">
                     <span>الوقت</span>
-                    <input type="time" class="doctor-custom-input doctor-time-input" name="scheduled_time" style="padding: 10px; font-size: 0.9rem;" required>
+                    <input type="time" class="doctor-custom-input doctor-time-input" name="scheduled_time" style="padding: 10px; font-size: 0.9rem;">
                   </div>
                 </div>
+
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; color:var(--white); font-size:0.85rem; cursor:pointer;">
+                  <input type="checkbox" name="no_time" id="appt-no-time">
+                  <span>بدون ساعة محددة (يوم فقط — بدون تذكير الساعتين)</span>
+                </label>
 
                 <div class="doctor-form-field" style="margin-bottom: 16px;">
                   <span>الغرض من الموعد (اختياري)</span>
@@ -2221,10 +2282,11 @@ const DoctorVisitDetailView = {
                   <div>
                     <strong>${formatDateTimeAr(a.scheduled_at)}</strong>
                     ${a.purpose ? ` — ${escHtml(a.purpose)}` : ''}
-                    <span class="appt-status-pill">${({ pending: 'معلق', reminded: 'تم التذكير', attended: 'حضر', missed: 'فوّت', cancelled: 'ملغى' }[a.status] || a.status)}</span>
+                    <span class="appt-status-pill">${({ scheduled: 'مجدول', pending: 'معلق', reminded: 'تم التذكير', attended: 'حضر', missed: 'فوّت', cancelled: 'ملغى' }[a.status] || a.status)}</span>
                   </div>
                   ${canEdit && a.status !== 'attended' && a.status !== 'cancelled' ? `
                     <div class="appt-actions">
+                      <button class="btn btn-sm btn-primary" data-start-followup="${a.id}">🩺 بدء الزيارة</button>
                       <button class="btn btn-sm btn-success" data-attend="${a.id}">✓ حضر</button>
                       <button class="btn btn-sm btn-ghost" data-cancel="${a.id}">إلغاء</button>
                     </div>
@@ -2265,7 +2327,21 @@ const DoctorVisitDetailView = {
       acceptBtn.addEventListener('click', async () => {
         try {
           await DB.acceptVisit(visit.id, doctor.id);
+          notifyWhatsApp('booking_confirmed', visit.id);
           showToast('✅ تم قبول الحالة', 'success');
+          Router.navigate(`doctor/visit/${visit.id}`);
+        } catch (err) { showToast(err.message, 'error'); }
+      });
+    }
+
+    // بدأ العمل (accepted → in_progress)
+    const startBtn = document.getElementById('start-visit-btn');
+    if (startBtn) {
+      startBtn.addEventListener('click', async () => {
+        try {
+          await DB.startVisit(visit.id);
+          notifyWhatsApp('service_started', visit.id);
+          showToast('▶️ تم بدء العمل', 'success');
           Router.navigate(`doctor/visit/${visit.id}`);
         } catch (err) { showToast(err.message, 'error'); }
       });
@@ -2277,6 +2353,7 @@ const DoctorVisitDetailView = {
         if (!confirm('هل أنت متأكد من إنهاء الحالة؟')) return;
         try {
           await DB.completeVisit(visit.id);
+          notifyWhatsApp('service_completed', visit.id);
           showToast('✅ تم إنهاء الحالة', 'success');
           Router.navigate(`doctor/visit/${visit.id}`);
         } catch (err) { showToast(err.message, 'error'); }
@@ -2477,13 +2554,28 @@ const DoctorVisitDetailView = {
     // add appointment
     const apptForm = document.getElementById('add-appt-form');
     if (apptForm) {
+      // checkbox "بدون ساعة محددة" يعطّل حقل الوقت
+      const noTimeCb = apptForm.querySelector('#appt-no-time');
+      const timeInput = apptForm.querySelector('input[name="scheduled_time"]');
+      if (noTimeCb && timeInput) {
+        noTimeCb.addEventListener('change', () => {
+          timeInput.disabled = noTimeCb.checked;
+          if (noTimeCb.checked) timeInput.value = '';
+        });
+      }
       apptForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(apptForm);
         const rawDate = fd.get('scheduled_date');
+        const noTime  = fd.get('no_time') === 'on';
         const rawTime = fd.get('scheduled_time');
-        if (!rawDate || !rawTime) return;
-        const scheduled_at = new Date(`${rawDate}T${rawTime}`).toISOString();
+        if (!rawDate) return;
+        if (!noTime && !rawTime) {
+          showToast('حدد الساعة أو فعّل "بدون ساعة محددة"', 'warning');
+          return;
+        }
+        const timeStr = noTime ? '00:00' : rawTime;
+        const scheduled_at = new Date(`${rawDate}T${timeStr}`).toISOString();
         try {
           await DB.addAppointment({
             visit_id: visit.id,
@@ -2491,6 +2583,7 @@ const DoctorVisitDetailView = {
             scheduled_at,
             purpose: fd.get('purpose') || null,
             created_by: doctor.id,
+            time_specified: !noTime,
           });
           apptForm.reset();
           showToast('✅ تم جدولة الموعد', 'success');
@@ -2506,6 +2599,29 @@ const DoctorVisitDetailView = {
     document.querySelectorAll('[data-cancel]').forEach(b => b.addEventListener('click', async () => {
       if (!confirm('إلغاء هذا الموعد؟')) return;
       try { await DB.cancelAppointment(b.dataset.cancel); Router.navigate(`doctor/visit/${visit.id}`); } catch (err) { showToast(err.message, 'error'); }
+    }));
+
+    // بدء زيارة متابعة من موعد مجدول
+    document.querySelectorAll('[data-start-followup]').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('بدء زيارة متابعة جديدة من هذا الموعد؟')) return;
+      try {
+        const newVisit = await DB.createFollowupVisit({
+          patient_id: visit.patient_id,
+          customer_id: visit.customer_id,
+          source_appointment_id: b.dataset.startFollowup,
+          doctor_id: doctor.id,
+          intake: {
+            customer_name: visit.intake_customer_name,
+            phone: visit.intake_phone,
+            animal_type: visit.intake_animal_type,
+            area: visit.intake_area,
+            animal_age: visit.intake_animal_age,
+            notes: null,
+          },
+        });
+        showToast('🩺 تم إنشاء زيارة متابعة', 'success');
+        Router.navigate(`doctor/visit/${newVisit.id}`);
+      } catch (err) { showToast(err.message, 'error'); }
     }));
 
     // collaborators
@@ -3105,7 +3221,7 @@ const CaseHistoryView = {
   _renderCard(it) {
     const kindBadge = '<span style="background:rgba(192,38,211,0.18); color:#e879f9; padding:4px 10px; border-radius:999px; font-size:0.8rem;">🩺 طبية</span>';
 
-    const statusMap = { waiting: 'قيد الانتظار', in_progress: 'قيد المعالجة', completed: 'مكتملة', cancelled: 'ملغاة' };
+    const statusMap = { waiting: 'قيد الانتظار', accepted: 'تم القبول', in_progress: 'قيد المعالجة', completed: 'مكتملة', cancelled: 'ملغاة' };
     const statusLabel = statusMap[it.status] || it.status || '—';
 
     const collabsLine = it.collaborators?.length
